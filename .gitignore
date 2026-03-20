@@ -1,0 +1,4 @@
+data/
+*.img
+*.img.xz
+.env
