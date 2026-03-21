@@ -2,6 +2,13 @@
 
 Minimal Raspberry Pi 5 image builder for Software-Defined Radio. Produces a flashable `.img.xz` with RTL-SDR V4 drivers, SoapySDR, and Tailscale pre-installed. No audio stack, no scanner config — just the SDR foundation.
 
+## Prerequisites
+
+- Docker with compose plugin
+- ~10 GB free disk space (for image download + build)
+
+That's it. The Docker container handles all other dependencies (QEMU, parted, kpartx, etc).
+
 ## Quick start
 
 ### Build the image
@@ -32,7 +39,7 @@ xz -d data/raspios-trixie-arm64-lite-provisioned.img.xz
 sudo dd if=data/raspios-trixie-arm64-lite-provisioned.img of=/dev/sdX bs=4M status=progress
 ```
 
-Or use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) with the `.img` file.
+Or use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (recommended) — select "Use custom" and pick the `.img.xz` directly. It handles decompression, shows only removable drives, verifies the write, and lets you set hostname/SSH keys/locale through its settings menu.
 
 Pre-built images are available from the [latest release](../../releases/latest).
 
@@ -112,12 +119,26 @@ Build-time options (env vars passed to `docker compose run`):
 ## How the build works
 
 1. Docker container (Ubuntu 24.04) with QEMU user-mode emulation
-2. Downloads pinned Raspberry Pi OS Trixie arm64 lite image
+2. Downloads pinned Raspberry Pi OS Trixie arm64 lite image (cached after first download)
 3. Expands the root partition by 2 GB
 4. Mounts via `kpartx` and chroots with QEMU aarch64
-5. `apt install rtl-sdr soapysdr-tools ...` (no source compilation)
+5. `apt install rtl-sdr soapysdr-tools ...` (no source compilation needed — Trixie's rtl-sdr 2.0.2 includes V4 support)
 6. Installs Tailscale, DVB blacklist, WiFi config, test scripts
 7. Cleans up and compresses to `.img.xz`
+
+To rebuild, remove the output image and re-run. The downloaded base image is cached:
+
+```bash
+rm data/raspios-trixie-arm64-lite-provisioned.img
+docker compose run --rm build
+```
+
+### Docker quirks addressed
+
+- **No `/dev/loopXpN` in Docker** — `losetup -P` doesn't create partition devices inside containers. Solved with `kpartx` which creates `/dev/mapper/` entries.
+- **dpkg hangs on service restarts** — post-install scripts try to start services in the chroot. Solved with `policy-rc.d` returning exit code 101.
+- **initramfs fails** — `mkinitramfs` can't detect root device in chroot. Solved with `MODULES=most` in initramfs config.
+- **ld.so.preload breaks QEMU** — Pi OS ships a preload that fails under emulation. Commented out during build, restored after.
 
 ## CI/CD
 
@@ -134,4 +155,5 @@ This image is a foundation. Install additional software on top:
 - [OpenWebRX+](https://www.openwebrx.de/) — web-based SDR receiver with waterfall
 - [trunk-recorder](https://github.com/robotastic/trunk-recorder) — trunked radio system recorder
 - [rtl_airband](https://github.com/rtl-airband/RTLSDR-Airband) — aviation scanner
+- [signal-logs](https://github.com/mihow/signal-logs) — signal logging and analysis
 - [pi-radio-station](https://github.com/mihow/pi-radio-station) — full monitoring station with audio mixing
