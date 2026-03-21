@@ -227,9 +227,9 @@ echo "=== Pre-pull OpenWebRX+ Docker image (arm64) ==="
 OWRX_IMAGE="slechev/openwebrxplus-softmbe:latest"
 mkdir -p "${MOUNT_DIR}/opt/openwebrx"
 docker pull --platform linux/arm64 "$OWRX_IMAGE"
-echo "Saving image to ${MOUNT_DIR}/opt/openwebrx/image.tar ..."
-docker save "$OWRX_IMAGE" > "${MOUNT_DIR}/opt/openwebrx/image.tar"
-echo "Saved ($(du -sh "${MOUNT_DIR}/opt/openwebrx/image.tar" | cut -f1))"
+echo "Saving image to ${MOUNT_DIR}/opt/openwebrx/openwebrxplus-softmbe-arm64.tar ..."
+docker save "$OWRX_IMAGE" > "${MOUNT_DIR}/opt/openwebrx/openwebrxplus-softmbe-arm64.tar"
+echo "Saved ($(du -sh "${MOUNT_DIR}/opt/openwebrx/openwebrxplus-softmbe-arm64.tar" | cut -f1))"
 
 # --- Disable ld.so.preload ---
 echo ""

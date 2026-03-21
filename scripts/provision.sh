@@ -181,7 +181,7 @@ Requires=docker.service
 Type=simple
 WorkingDirectory=/opt/openwebrx
 # Load pre-saved image on first boot, then delete the tar to free ~1GB
-ExecStartPre=/bin/sh -c 'test -f /opt/openwebrx/image.tar && docker load < /opt/openwebrx/image.tar && rm -f /opt/openwebrx/image.tar || true'
+ExecStartPre=/bin/sh -c 'test -f /opt/openwebrx/openwebrxplus-softmbe-arm64.tar && docker load < /opt/openwebrx/openwebrxplus-softmbe-arm64.tar && rm -f /opt/openwebrx/openwebrxplus-softmbe-arm64.tar || true'
 ExecStart=/usr/bin/docker compose up --remove-orphans
 ExecStop=/usr/bin/docker compose down
 Restart=always
