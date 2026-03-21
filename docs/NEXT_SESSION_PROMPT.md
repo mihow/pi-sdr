@@ -42,23 +42,28 @@ Developed a fast patching approach — mount the raw .img via kpartx in a Docker
 - `feat/openwebrx` — OpenWebRX+ integration, PR #1 open
 
 ### Built images in data/
-- `data/pi-sdr-base.img` (7.8 GB) — latest build with offline OpenWebRX+, patched with WiFi/Tailscale/SSH/hostname
-- `data/pi-sdr-base.img.xz` (1.2 GB) — compressed version (pre-patch, missing WiFi/Tailscale/SSH)
+- Full rebuild in progress (COMPRESS=false) with SSH + SSL changes baked in
+- Previous image deleted — was built before SSH/SSL fixes
 
-### Pi hardware test in progress
-- First flash (old image, one-time Tailscale key) — Pi registered on Tailscale but SSH never worked (connection refused). Tailscale link was unreachable via ping.
-- User is reflashing with the new patched image (has reusable Tailscale key, SSH enabled, WiFi, offline OpenWebRX+)
-- RTL-SDR Blog V4 dongle available for testing
+### Docker E2E test validated
+- Tailscale auth, HTTPS cert (Let's Encrypt), SSH with password, OpenWebRX+ waterfall + audio all working
+- Test compose: `docker-compose.test.yml` (Tailscale sidecar + OpenWebRX+ sharing network)
+- HTTPS cert needs retry on first boot — ACME auth can lag on new hostnames (entrypoint retries 3x)
+
+### Stale Tailscale nodes to clean up
+- Delete from https://login.tailscale.com/admin/machines:
+  - pi-sdr-test, pi-sdr-test-1, pi-sdr-test-2, pi-sdr-test-3 (test containers)
+  - pi-sdr (100.85.90.10, old Pi attempt)
 
 ## What needs to happen next
 
 ### Immediate
-1. **Test the reflashed Pi** — verify SSH, Tailscale, OpenWebRX+ container starts, web UI works with dongle
-2. **Debug Tailscale connectivity** if it still can't establish a tunnel — may need to check firewall/NAT settings
-3. **Merge PR #1** once Pi test passes
+1. **Wait for rebuild to finish** — verify SSH and SSL are baked in
+2. **E2E test the new image** in Docker before flashing
+3. **Flash to Pi** and verify first-boot: SSH, Tailscale, OpenWebRX+, audio
+4. **Merge PR #1** once Pi test passes
 
 ### Build improvements to add
-- Bake hostname, SSH, and default user into `build-image.sh` (currently requires patching)
 - Add a `scripts/patch-image.sh` script to make the manual patching workflow reusable
 - Consider whether the `COMPRESS` env var should default to `false` for dev and only compress in CI
 
