@@ -63,7 +63,7 @@ From [pi-radio-monitoring-research](https://github.com/mihow/pi-radio-monitoring
 From this project (pi-sdr, feat/openwebrx branch):
 
 - **WiFi country code (REGDOMAIN)** must be set or the Pi's WiFi radio stays in passive-scan mode and cannot connect. Without `/etc/default/crda` containing `REGDOMAIN=US`, wlan0 is rfkill soft-blocked and NetworkManager reports it as unavailable. The `WIFI_COUNTRY` env var (default `US`) is written during build.
-- **T-Mobile CGNAT path MTU** is ~1424 — silently drops oversized packets without ICMP "too big". TLS handshakes (including Tailscale control plane) hang on first boot. Fix: TCP MSS clamp (`iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu`). Test with `ping -c1 -M do -s 1396 -4 8.8.8.8`.
+- **T-Mobile CGNAT path MTU** is ~1424 — silently drops oversized packets without ICMP "too big". TLS ClientHello (1581 bytes) gets dropped, so HTTPS to Tailscale control plane and ACME servers hangs. MSS clamp alone is insufficient because TLS handshakes are single TCP segments. Fix: set interface MTU to 1400 (`ip link set eth0 mtu 1400`). Build sets this via networkd-dispatcher script and in NetworkManager connection files. Test with `ping -c1 -M do -s 1396 -4 8.8.8.8`.
 - **docker load on SD card** takes >90s for a 1.1GB tar — exceeds systemd's default `TimeoutStartSec=90s`. Set `TimeoutStartSec=300` on services that run `docker load`.
 - **Tailscale reusable keys** are required — one-time keys get consumed before first-boot reboot completes, leaving the device unable to re-authenticate.
 - **OpenWebRX+ requires Docker** on Trixie — native apt install fails because `python3-csdr` requires Python < 3.12 but Trixie ships 3.13.

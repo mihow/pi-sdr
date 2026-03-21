@@ -335,6 +335,7 @@ autoconnect=true
 [wifi]
 mode=infrastructure
 ssid=${WIFI_SSID}
+mtu=1400
 
 [wifi-security]
 auth-alg=open
