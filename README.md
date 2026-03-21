@@ -138,22 +138,32 @@ These are installed to `/usr/local/bin/` on the Pi image:
 
 ## Configuration
 
-Copy `.env.example` to `.env`:
+Copy `.env.example` to `.env` and fill in what you need. All variables are optional — the image works without any of them, but some features require manual setup on the Pi instead.
 
 ```bash
-# WiFi (optional — leave blank for ethernet only)
+# WiFi (optional)
 WIFI_SSID=MyNetwork
 WIFI_PASSWORD=secret
 WIFI_COUNTRY=US
 
-# Tailscale (optional — authenticate manually on first boot if blank)
+# Tailscale (optional)
 TAILSCALE_AUTHKEY=tskey-auth-...
 
-# OpenWebRX+ admin (optional — create manually if blank)
+# OpenWebRX+ admin (optional)
 OPENWEBRX_ADMIN_PASSWORD=changeme
 ```
 
-Build-time options (env vars passed to `docker compose run`):
+### What happens when variables aren't set
+
+| Variable | If blank | Manual setup |
+|----------|----------|--------------|
+| `WIFI_SSID` | No WiFi configured. Pi only works over ethernet. | SSH in and use `nmcli dev wifi connect <SSID> password <pass>` |
+| `TAILSCALE_AUTHKEY` | Tailscale is installed but not authenticated. No remote access until you log in. | SSH in and run `sudo tailscale up` |
+| `OPENWEBRX_ADMIN_PASSWORD` | OpenWebRX+ works for listening (no login needed) but admin settings panel is locked. | SSH in and run `docker exec -it openwebrx openwebrx admin adduser admin` |
+
+Without WiFi or Tailscale, you'll need ethernet + a monitor/keyboard or use Pi Imager's custom settings to enable SSH and set a password for initial access.
+
+### Build-time options
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -164,7 +174,7 @@ Build-time options (env vars passed to `docker compose run`):
 
 1. Docker container (Ubuntu 24.04) with QEMU user-mode emulation
 2. Downloads pinned Raspberry Pi OS Trixie arm64 lite image (cached after first download)
-3. Expands the root partition by 4 GB
+3. Expands the root partition by 5 GB
 4. Mounts via `kpartx` and chroots with QEMU aarch64
 5. `apt install rtl-sdr soapysdr-tools openwebrx ...` (no source compilation)
 6. Installs Tailscale, decoders, DVB blacklist, WiFi config, bookmarks, test scripts
