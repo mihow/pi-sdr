@@ -291,6 +291,16 @@ PI_HASH=$(openssl passwd -6 "$PI_PASSWORD")
 echo "pi:${PI_HASH}" > "${MOUNT_DIR}/boot/firmware/userconf.txt"
 echo "  Written to /boot/firmware/userconf.txt (pi:picketfencing)"
 
+# --- WiFi regulatory domain ---
+# Without a country code, the Pi WiFi radio stays in passive-scan mode
+# and cannot connect to any network.
+echo ""
+echo "=== Set WiFi country: $WIFI_COUNTRY ==="
+cat > "${MOUNT_DIR}/etc/default/crda" << EOF
+REGDOMAIN=${WIFI_COUNTRY}
+EOF
+echo "  Written to /etc/default/crda"
+
 # --- WiFi configuration ---
 if [[ -n "$WIFI_SSID" ]]; then
     echo ""
