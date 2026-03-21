@@ -32,7 +32,6 @@ COMPRESS="${COMPRESS:-true}"
 BUILD_DIR="/build"
 DATA_DIR="${BUILD_DIR}/data"
 IMAGE_XZ="${DATA_DIR}/${IMAGE_NAME}.img.xz"
-IMAGE_RAW="${DATA_DIR}/${IMAGE_NAME}.img"
 IMAGE_WORK="${DATA_DIR}/${IMAGE_NAME}-work.img"
 IMAGE_OUT="${DATA_DIR}/raspios-trixie-arm64-lite-provisioned.img"
 
