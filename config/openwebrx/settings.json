@@ -47,7 +47,7 @@
                 },
                 "airband": {
                     "name": "Air Band",
-                    "center_freq": 127000000,
+                    "center_freq": 122500000,
                     "samp_rate": 2400000,
                     "start_freq": 121500000,
                     "start_mod": "am",
