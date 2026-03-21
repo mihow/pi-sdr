@@ -63,6 +63,19 @@ systemctl enable ssh.service || ln -sf \
 # Set pi user password (matches userconf.txt on boot partition)
 echo "pi:picketfencing" | chpasswd
 
+# --- TCP MSS clamp for CGNAT environments ---
+# T-Mobile home internet and other CGNAT providers have reduced path MTU (~1424)
+# but silently drop oversized packets without sending ICMP "too big" responses.
+# This causes TLS handshakes (including Tailscale control plane) to hang.
+# Clamping TCP MSS to PMTU lets the kernel negotiate correct segment sizes.
+echo "=== Configure TCP MSS clamp ==="
+cat > /etc/networkd-dispatcher/routable.d/50-mss-clamp << 'MSSCLAMP'
+#!/bin/sh
+iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IFACE" -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
+iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IFACE" -j TCPMSS --clamp-mss-to-pmtu
+MSSCLAMP
+chmod +x /etc/networkd-dispatcher/routable.d/50-mss-clamp
+
 # --- DVB kernel module blacklist ---
 # DVB modules claim the RTL-SDR chip at boot; blacklisting hands it to rtl-sdr.
 echo "=== Install DVB blacklist ==="
@@ -190,6 +203,8 @@ Requires=docker.service
 [Service]
 Type=simple
 WorkingDirectory=/opt/openwebrx
+# docker load of 1.1GB tar on SD card can take >90s; allow 5 minutes
+TimeoutStartSec=300
 # Load pre-saved image on first boot, then delete the tar to free ~1GB
 ExecStartPre=/bin/sh -c 'test -f /opt/openwebrx/openwebrxplus-softmbe-arm64.tar && docker load < /opt/openwebrx/openwebrxplus-softmbe-arm64.tar && rm -f /opt/openwebrx/openwebrxplus-softmbe-arm64.tar || true'
 ExecStart=/usr/bin/docker compose up --remove-orphans
