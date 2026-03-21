@@ -154,6 +154,8 @@ fi
 # --- Copy to working file, decompress ---
 echo ""
 echo "=== Decompress ==="
+# Clean up any leftover work files from previous failed builds
+rm -f "$IMAGE_WORK" "$IMAGE_WORK.xz"
 echo "Copying to work image..."
 cp "$IMAGE_XZ" "$IMAGE_WORK.xz"
 echo "Decompressing..."
