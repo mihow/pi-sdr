@@ -1,0 +1,77 @@
+[
+  {
+    "name": "GMRS 1",
+    "frequency": 462562500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 2",
+    "frequency": 462587500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 3",
+    "frequency": 462612500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 4",
+    "frequency": 462637500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 5",
+    "frequency": 462662500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 6",
+    "frequency": 462687500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 7",
+    "frequency": 462712500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 15R (Repeater Output)",
+    "frequency": 462550000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 16R (Repeater Output)",
+    "frequency": 462575000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 17R (Repeater Output)",
+    "frequency": 462600000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 18R (Repeater Output)",
+    "frequency": 462625000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 19R (Repeater Output)",
+    "frequency": 462650000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 20R (Repeater Output)",
+    "frequency": 462675000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 21R (Repeater Output)",
+    "frequency": 462700000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "GMRS 22R (Repeater Output)",
+    "frequency": 462725000,
+    "modulation": "nfm"
+  }
+]

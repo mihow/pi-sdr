@@ -1,0 +1,57 @@
+[
+  {
+    "name": "FM 88.0",
+    "frequency": 88000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 90.0",
+    "frequency": 90000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 92.0",
+    "frequency": 92000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 94.0",
+    "frequency": 94000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 96.0",
+    "frequency": 96000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 98.0",
+    "frequency": 98000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 100.0",
+    "frequency": 100000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 102.0",
+    "frequency": 102000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 104.0",
+    "frequency": 104000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 106.0",
+    "frequency": 106000000,
+    "modulation": "wfm"
+  },
+  {
+    "name": "FM 108.0",
+    "frequency": 108000000,
+    "modulation": "wfm"
+  }
+]

@@ -1,0 +1,112 @@
+[
+  {
+    "name": "FRS 1",
+    "frequency": 462562500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 2",
+    "frequency": 462587500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 3",
+    "frequency": 462612500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 4",
+    "frequency": 462637500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 5",
+    "frequency": 462662500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 6",
+    "frequency": 462687500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 7",
+    "frequency": 462712500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 8",
+    "frequency": 467562500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 9",
+    "frequency": 467587500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 10",
+    "frequency": 467612500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 11",
+    "frequency": 467637500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 12",
+    "frequency": 467662500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 13",
+    "frequency": 467687500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 14",
+    "frequency": 467712500,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 15",
+    "frequency": 462550000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 16",
+    "frequency": 462575000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 17",
+    "frequency": 462600000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 18",
+    "frequency": 462625000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 19",
+    "frequency": 462650000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 20",
+    "frequency": 462675000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 21",
+    "frequency": 462700000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "FRS 22",
+    "frequency": 462725000,
+    "modulation": "nfm"
+  }
+]

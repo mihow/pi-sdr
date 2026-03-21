@@ -1,0 +1,27 @@
+[
+  {
+    "name": "144.390 (APRS)",
+    "frequency": 144390000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "146.520 (National Simplex)",
+    "frequency": 146520000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "146.580 (Simplex)",
+    "frequency": 146580000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "147.000 (Repeater)",
+    "frequency": 147000000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "145.050 (Packet)",
+    "frequency": 145050000,
+    "modulation": "nfm"
+  }
+]
