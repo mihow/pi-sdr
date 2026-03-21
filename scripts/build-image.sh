@@ -291,6 +291,25 @@ PI_HASH=$(openssl passwd -6 "$PI_PASSWORD")
 echo "pi:${PI_HASH}" > "${MOUNT_DIR}/boot/firmware/userconf.txt"
 echo "  Written to /boot/firmware/userconf.txt (pi:picketfencing)"
 
+# --- Network MTU for CGNAT ---
+# T-Mobile and other CGNAT providers have a path MTU of ~1424 but silently
+# drop oversized packets. TLS handshakes (1500+ bytes) fail without this.
+# MSS clamp alone doesn't help — the TLS ClientHello is a single segment.
+echo ""
+echo "=== Set network MTU to 1400 for CGNAT compatibility ==="
+mkdir -p "${MOUNT_DIR}/etc/networkd-dispatcher/routable.d"
+cat > "${MOUNT_DIR}/etc/networkd-dispatcher/routable.d/50-mtu-clamp" << 'MTUFIX'
+#!/bin/sh
+# Set MTU on all physical interfaces for CGNAT compatibility
+for dev in /sys/class/net/eth* /sys/class/net/wlan*; do
+    [ -e "$dev" ] || continue
+    iface=$(basename "$dev")
+    ip link set "$iface" mtu 1400 2>/dev/null || true
+done
+MTUFIX
+chmod +x "${MOUNT_DIR}/etc/networkd-dispatcher/routable.d/50-mtu-clamp"
+echo "  Written to /etc/networkd-dispatcher/routable.d/50-mtu-clamp"
+
 # --- WiFi regulatory domain ---
 # Without a country code, the Pi WiFi radio stays in passive-scan mode
 # and cannot connect to any network.
