@@ -26,3 +26,4 @@ services:
       - ./scripts:/build/scripts
       - ./config:/build/config
       - ./test-scripts:/build/test-scripts
+      - /var/run/docker.sock:/var/run/docker.sock
