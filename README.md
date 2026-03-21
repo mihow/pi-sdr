@@ -24,7 +24,7 @@ cp .env.example .env
 docker compose run --rm build
 ```
 
-Output: `data/raspios-trixie-arm64-lite-provisioned.img.xz` (~694 MB)
+Output: `data/pi-sdr-base.img.xz` (~694 MB)
 
 For faster dev cycles, skip compression:
 
@@ -35,8 +35,8 @@ COMPRESS=false docker compose run --rm build
 ### Flash to SD card
 
 ```bash
-xz -d data/raspios-trixie-arm64-lite-provisioned.img.xz
-sudo dd if=data/raspios-trixie-arm64-lite-provisioned.img of=/dev/sdX bs=4M status=progress
+xz -d data/pi-sdr-base.img.xz
+sudo dd if=data/pi-sdr-base.img of=/dev/sdX bs=4M status=progress
 ```
 
 Or use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (recommended) — select "Use custom" and pick the `.img.xz` directly. It handles decompression, shows only removable drives, verifies the write, and lets you set hostname/SSH keys/locale through its settings menu.
@@ -125,7 +125,7 @@ Build-time options (env vars passed to `docker compose run`):
 To rebuild, remove the output image and re-run. The downloaded base image is cached:
 
 ```bash
-rm data/raspios-trixie-arm64-lite-provisioned.img
+rm data/pi-sdr-base.img
 docker compose run --rm build
 ```
 
