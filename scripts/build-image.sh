@@ -26,7 +26,7 @@ IMAGE_DATE="2025-12-04"
 IMAGE_NAME="${IMAGE_DATE}-raspios-trixie-arm64-lite"
 IMAGE_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-${IMAGE_DATE}/${IMAGE_NAME}.img.xz"
 
-EXPAND_GB=4
+EXPAND_GB=5
 COMPRESS="${COMPRESS:-true}"
 
 BUILD_DIR="/build"
@@ -220,6 +220,16 @@ fi
 if [[ -d "${BUILD_DIR}/test-scripts" ]]; then
     cp -r "${BUILD_DIR}/test-scripts/" "${MOUNT_DIR}/opt/provision/test-scripts/"
 fi
+
+# --- Pre-pull OpenWebRX+ Docker image for offline first boot ---
+echo ""
+echo "=== Pre-pull OpenWebRX+ Docker image (arm64) ==="
+OWRX_IMAGE="slechev/openwebrxplus-softmbe:latest"
+mkdir -p "${MOUNT_DIR}/opt/openwebrx"
+docker pull --platform linux/arm64 "$OWRX_IMAGE"
+echo "Saving image to ${MOUNT_DIR}/opt/openwebrx/image.tar ..."
+docker save "$OWRX_IMAGE" > "${MOUNT_DIR}/opt/openwebrx/image.tar"
+echo "Saved ($(du -sh "${MOUNT_DIR}/opt/openwebrx/image.tar" | cut -f1))"
 
 # --- Disable ld.so.preload ---
 echo ""

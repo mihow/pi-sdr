@@ -180,8 +180,8 @@ Requires=docker.service
 [Service]
 Type=simple
 WorkingDirectory=/opt/openwebrx
-# First boot pulls the image (~1GB); subsequent boots skip if cached
-ExecStartPre=/usr/bin/docker compose pull
+# Load pre-saved image on first boot, then delete the tar to free ~1GB
+ExecStartPre=/bin/sh -c 'test -f /opt/openwebrx/image.tar && docker load < /opt/openwebrx/image.tar && rm -f /opt/openwebrx/image.tar || true'
 ExecStart=/usr/bin/docker compose up --remove-orphans
 ExecStop=/usr/bin/docker compose down
 Restart=always
