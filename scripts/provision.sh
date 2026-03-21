@@ -87,54 +87,86 @@ EOF
         /etc/systemd/system/multi-user.target.wants/tailscale-firstboot.service
 fi
 
-# --- OpenWebRX+ ---
-# The PPA only has bookworm packages; they work on Trixie.
-echo "=== Install OpenWebRX+ ==="
-apt-get install -y gnupg
-curl -fsSL https://luarvique.github.io/ppa/openwebrx-plus.gpg \
-    | gpg --yes --dearmor -o /etc/apt/trusted.gpg.d/openwebrx-plus.gpg
-echo "deb [signed-by=/etc/apt/trusted.gpg.d/openwebrx-plus.gpg] https://luarvique.github.io/ppa/bookworm ./" \
-    > /etc/apt/sources.list.d/openwebrx-plus.list
+# --- OpenWebRX+ (Docker) ---
+# The OpenWebRX+ PPA requires Python < 3.12 (python3-csdr dependency), but
+# Trixie ships Python 3.13. Instead of native install, we run OpenWebRX+ as a
+# Docker container on the Pi. The slechev/openwebrxplus-softmbe image bundles
+# all decoders (DMR, D-STAR, NXDN, P25, M17, WSJTX, APRS, etc.) for arm64.
+echo "=== Install Docker for OpenWebRX+ ==="
+# Install Docker from official repo — can't run the daemon in chroot,
+# but we can install packages. The container image pulls on first boot.
+apt-get install -y ca-certificates curl
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable" \
+    > /etc/apt/sources.list.d/docker.list
 apt-get update
-apt-get install -y openwebrx
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+usermod -aG docker pi || true
 
-# --- Digital mode decoders ---
-echo "=== Install digital mode decoders ==="
-apt-get install -y \
-    codec2 \
-    direwolf \
-    wsjtx \
-    m17-demod \
-    multimon-ng
-
-# --- Deploy OpenWebRX+ config ---
+# Deploy OpenWebRX+ config to host paths that get volume-mounted into the container
 echo "=== Deploy OpenWebRX+ config ==="
-cp /opt/provision/config/openwebrx/openwebrx.conf /etc/openwebrx/openwebrx.conf
+mkdir -p /opt/openwebrx/etc/openwebrx /opt/openwebrx/var
+cp /opt/provision/config/openwebrx/openwebrx.conf /opt/openwebrx/etc/openwebrx/openwebrx.conf
+cp /opt/provision/config/openwebrx/settings.json /opt/openwebrx/var/settings.json
 
-# Settings (SDR profiles, receiver info) go to data directory
-mkdir -p /var/lib/openwebrx
-cp /opt/provision/config/openwebrx/settings.json /var/lib/openwebrx/settings.json
-
-# Frequency bookmarks
 if [[ -d /opt/provision/config/openwebrx/bookmarks.d ]]; then
-    mkdir -p /etc/openwebrx/bookmarks.d
-    cp /opt/provision/config/openwebrx/bookmarks.d/*.json /etc/openwebrx/bookmarks.d/
+    mkdir -p /opt/openwebrx/etc/openwebrx/bookmarks.d
+    cp /opt/provision/config/openwebrx/bookmarks.d/*.json /opt/openwebrx/etc/openwebrx/bookmarks.d/
 fi
 
-# Fix ownership — openwebrx user is created by the package install
-chown -R openwebrx:openwebrx /var/lib/openwebrx/
-
-# --- OpenWebRX admin user ---
+# Create docker-compose.yml for OpenWebRX+
 OPENWEBRX_ADMIN_PASSWORD="${OPENWEBRX_ADMIN_PASSWORD:-}"
+cat > /opt/openwebrx/docker-compose.yml << 'COMPOSE'
+services:
+  openwebrx:
+    image: slechev/openwebrxplus-softmbe:latest
+    container_name: openwebrx
+    restart: unless-stopped
+    ports:
+      - "8073:8073"
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - /opt/openwebrx/etc/openwebrx:/etc/openwebrx
+      - /opt/openwebrx/var:/var/lib/openwebrx
+    tmpfs:
+      - /tmp
+COMPOSE
+
+# Add admin user env vars if password was provided
 if [[ -n "$OPENWEBRX_ADMIN_PASSWORD" ]]; then
-    echo "=== Create OpenWebRX admin user ==="
-    echo "$OPENWEBRX_ADMIN_PASSWORD" | openwebrx admin adduser --noninteractive admin
+    cat >> /opt/openwebrx/docker-compose.yml << EOF
+    environment:
+      - OPENWEBRX_ADMIN_USER=admin
+      - OPENWEBRX_ADMIN_PASSWORD=${OPENWEBRX_ADMIN_PASSWORD}
+EOF
 fi
 
-# Enable the service at boot
-echo "=== Enable OpenWebRX service ==="
+# Create systemd service to start OpenWebRX+ container on boot
+cat > /etc/systemd/system/openwebrx.service << 'SERVICE'
+[Unit]
+Description=OpenWebRX+ Web SDR Receiver
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/openwebrx
+# First boot pulls the image (~1GB); subsequent boots skip if cached
+ExecStartPre=/usr/bin/docker compose pull
+ExecStart=/usr/bin/docker compose up --remove-orphans
+ExecStop=/usr/bin/docker compose down
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
 systemctl enable openwebrx.service || ln -sf \
-    /lib/systemd/system/openwebrx.service \
+    /etc/systemd/system/openwebrx.service \
     /etc/systemd/system/multi-user.target.wants/openwebrx.service
 
 # --- Deploy test scripts ---

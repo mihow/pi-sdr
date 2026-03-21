@@ -26,7 +26,7 @@ IMAGE_DATE="2025-12-04"
 IMAGE_NAME="${IMAGE_DATE}-raspios-trixie-arm64-lite"
 IMAGE_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-${IMAGE_DATE}/${IMAGE_NAME}.img.xz"
 
-EXPAND_GB=3
+EXPAND_GB=4
 COMPRESS="${COMPRESS:-true}"
 
 BUILD_DIR="/build"

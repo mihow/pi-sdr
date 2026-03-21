@@ -62,7 +62,7 @@ Also includes: DVB kernel module blacklist, udev rules, frequency bookmarks for 
 
 ## Web UI (OpenWebRX+)
 
-After flashing and booting, OpenWebRX+ starts automatically on port 8073:
+OpenWebRX+ runs as a Docker container on the Pi (the Bookworm apt packages aren't compatible with Trixie's Python 3.13). On first boot, the container image pulls automatically (~1 GB download). After that, it starts on port 8073:
 
 - **Local network:** `http://<pi-ip>:8073`
 - **Via Tailscale:** `http://<pi-tailscale-name>:8073`
@@ -79,8 +79,10 @@ Anyone on the network can tune and listen. The admin panel (settings, bookmarks)
 If you set `OPENWEBRX_ADMIN_PASSWORD` in `.env` before building, the admin user is pre-created. Otherwise create one via SSH:
 
 ```bash
-openwebrx admin adduser admin
+docker exec -it openwebrx openwebrx admin adduser admin
 ```
+
+Config files live at `/opt/openwebrx/` on the Pi and are volume-mounted into the container.
 
 ### Pre-configured band profiles
 
@@ -162,7 +164,7 @@ Build-time options (env vars passed to `docker compose run`):
 
 1. Docker container (Ubuntu 24.04) with QEMU user-mode emulation
 2. Downloads pinned Raspberry Pi OS Trixie arm64 lite image (cached after first download)
-3. Expands the root partition by 3 GB
+3. Expands the root partition by 4 GB
 4. Mounts via `kpartx` and chroots with QEMU aarch64
 5. `apt install rtl-sdr soapysdr-tools openwebrx ...` (no source compilation)
 6. Installs Tailscale, decoders, DVB blacklist, WiFi config, bookmarks, test scripts
