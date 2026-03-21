@@ -60,5 +60,15 @@ From [pi-radio-monitoring-research](https://github.com/mihow/pi-radio-monitoring
 - **PipeWire TCP mode** (port 4713) required for audio from Docker containers — socket bind-mount doesn't work
 - **Trixie rtl-sdr 2.0.2** includes V4 support — may not need custom Blog fork compile
 
+From this project (pi-sdr, feat/openwebrx branch):
+
+- **T-Mobile CGNAT path MTU** is ~1424 — silently drops oversized packets without ICMP "too big". TLS handshakes (including Tailscale control plane) hang on first boot. Fix: TCP MSS clamp (`iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu`). Test with `ping -c1 -M do -s 1396 -4 8.8.8.8`.
+- **docker load on SD card** takes >90s for a 1.1GB tar — exceeds systemd's default `TimeoutStartSec=90s`. Set `TimeoutStartSec=300` on services that run `docker load`.
+- **Tailscale reusable keys** are required — one-time keys get consumed before first-boot reboot completes, leaving the device unable to re-authenticate.
+- **OpenWebRX+ requires Docker** on Trixie — native apt install fails because `python3-csdr` requires Python < 3.12 but Trixie ships 3.13.
+- **OpenWebRX+ auto-detects SSL** certs at `/etc/openwebrx/cert.pem` and `/etc/openwebrx/key.pem` — no config change needed beyond placing the files there.
+- **SSH "too many auth failures"** happens when the client has many SSH keys loaded — the server's `MaxAuthTries` is exhausted before password auth is tried. Use `-o PubkeyAuthentication=no` or `ssh-copy-id` to add a specific key.
+- **Docker bridge creation triggers Tailscale rebinding** — `LinkChange: major` events during first boot can race with Tailscale's control plane connection. After a successful connection + reboot, cached state prevents the issue.
+
 ## Downstream projects
 - [pi-radio-station](https://github.com/mihow/pi-radio-station) — full SDR monitoring station with Liquidsoap audio mixing, AirPlay, web dashboard

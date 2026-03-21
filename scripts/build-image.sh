@@ -268,6 +268,13 @@ if [[ -L "${MOUNT_DIR}/etc/resolv.conf" ]]; then
 fi
 cp /etc/resolv.conf "${MOUNT_DIR}/etc/resolv.conf"
 
+# --- Set hostname ---
+echo ""
+echo "=== Set hostname ==="
+echo "pi-sdr" > "${MOUNT_DIR}/etc/hostname"
+sed -i 's/127\.0\.1\.1.*/127.0.1.1\tpi-sdr/' "${MOUNT_DIR}/etc/hosts"
+echo "  Hostname set to pi-sdr"
+
 # --- Enable SSH ---
 echo ""
 echo "=== Enable SSH ==="
