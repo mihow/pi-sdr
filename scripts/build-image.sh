@@ -26,7 +26,7 @@ IMAGE_DATE="2025-12-04"
 IMAGE_NAME="${IMAGE_DATE}-raspios-trixie-arm64-lite"
 IMAGE_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-${IMAGE_DATE}/${IMAGE_NAME}.img.xz"
 
-EXPAND_GB=2
+EXPAND_GB=3
 COMPRESS="${COMPRESS:-true}"
 
 BUILD_DIR="/build"
@@ -42,6 +42,7 @@ TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-}"
 WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PASSWORD="${WIFI_PASSWORD:-}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
+OPENWEBRX_ADMIN_PASSWORD="${OPENWEBRX_ADMIN_PASSWORD:-}"
 
 # Track state for cleanup
 LOOP_DEV=""
@@ -294,6 +295,7 @@ CHROOT_ENV=(
     "PATH=/usr/sbin:/usr/bin:/sbin:/bin"
 )
 [[ -n "$TAILSCALE_AUTHKEY" ]] && CHROOT_ENV+=("TAILSCALE_AUTHKEY=${TAILSCALE_AUTHKEY}")
+[[ -n "${OPENWEBRX_ADMIN_PASSWORD:-}" ]] && CHROOT_ENV+=("OPENWEBRX_ADMIN_PASSWORD=${OPENWEBRX_ADMIN_PASSWORD}")
 
 # --- Run provision.sh in chroot ---
 echo ""

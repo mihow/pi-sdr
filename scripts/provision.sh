@@ -7,6 +7,7 @@
 #   DEBIAN_FRONTEND      — set to noninteractive
 #   PATH                 — /usr/sbin:/usr/bin:/sbin:/bin
 #   TAILSCALE_AUTHKEY    — optional; if set, creates a first-boot auth service
+#   OPENWEBRX_ADMIN_PASSWORD — optional; if set, creates an admin user for the web UI
 
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -85,6 +86,56 @@ EOF
         /etc/systemd/system/tailscale-firstboot.service \
         /etc/systemd/system/multi-user.target.wants/tailscale-firstboot.service
 fi
+
+# --- OpenWebRX+ ---
+# The PPA only has bookworm packages; they work on Trixie.
+echo "=== Install OpenWebRX+ ==="
+apt-get install -y gnupg
+curl -fsSL https://luarvique.github.io/ppa/openwebrx-plus.gpg \
+    | gpg --yes --dearmor -o /etc/apt/trusted.gpg.d/openwebrx-plus.gpg
+echo "deb [signed-by=/etc/apt/trusted.gpg.d/openwebrx-plus.gpg] https://luarvique.github.io/ppa/bookworm ./" \
+    > /etc/apt/sources.list.d/openwebrx-plus.list
+apt-get update
+apt-get install -y openwebrx
+
+# --- Digital mode decoders ---
+echo "=== Install digital mode decoders ==="
+apt-get install -y \
+    codec2 \
+    direwolf \
+    wsjtx \
+    m17-demod \
+    multimon-ng
+
+# --- Deploy OpenWebRX+ config ---
+echo "=== Deploy OpenWebRX+ config ==="
+cp /opt/provision/config/openwebrx/openwebrx.conf /etc/openwebrx/openwebrx.conf
+
+# Settings (SDR profiles, receiver info) go to data directory
+mkdir -p /var/lib/openwebrx
+cp /opt/provision/config/openwebrx/settings.json /var/lib/openwebrx/settings.json
+
+# Frequency bookmarks
+if [[ -d /opt/provision/config/openwebrx/bookmarks.d ]]; then
+    mkdir -p /etc/openwebrx/bookmarks.d
+    cp /opt/provision/config/openwebrx/bookmarks.d/*.json /etc/openwebrx/bookmarks.d/
+fi
+
+# Fix ownership — openwebrx user is created by the package install
+chown -R openwebrx:openwebrx /var/lib/openwebrx/
+
+# --- OpenWebRX admin user ---
+OPENWEBRX_ADMIN_PASSWORD="${OPENWEBRX_ADMIN_PASSWORD:-}"
+if [[ -n "$OPENWEBRX_ADMIN_PASSWORD" ]]; then
+    echo "=== Create OpenWebRX admin user ==="
+    echo "$OPENWEBRX_ADMIN_PASSWORD" | openwebrx admin adduser --noninteractive admin
+fi
+
+# Enable the service at boot
+echo "=== Enable OpenWebRX service ==="
+systemctl enable openwebrx.service || ln -sf \
+    /lib/systemd/system/openwebrx.service \
+    /etc/systemd/system/multi-user.target.wants/openwebrx.service
 
 # --- Deploy test scripts ---
 echo "=== Deploy test scripts ==="

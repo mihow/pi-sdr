@@ -20,6 +20,7 @@ services:
       - WIFI_SSID
       - WIFI_PASSWORD
       - WIFI_COUNTRY
+      - OPENWEBRX_ADMIN_PASSWORD
     volumes:
       - ./data:/build/data
       - ./scripts:/build/scripts
