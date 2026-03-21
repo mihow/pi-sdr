@@ -61,14 +61,7 @@ cleanup() {
         fi
     done
 
-    # Unmount boot and root
-    if mountpoint -q "${MOUNT_DIR}/boot/firmware" 2>/dev/null; then
-        umount "${MOUNT_DIR}/boot/firmware" || true
-    fi
-    if mountpoint -q "${MOUNT_DIR}" 2>/dev/null; then
-        umount "${MOUNT_DIR}" || true
-    fi
-
+    # Restore files BEFORE unmounting root
     # Restore ld.so.preload
     local preload="${MOUNT_DIR}/etc/ld.so.preload"
     if [[ -f "$preload" ]]; then
@@ -83,17 +76,22 @@ cleanup() {
         echo "  Restoring resolv.conf from backup"
         mv "$resolv_bak" "$resolv" || true
     elif [[ -e "$resolv" && ! -L "$resolv" ]]; then
-        # No backup means it was originally a symlink; recreate it
         echo "  Restoring resolv.conf symlink"
         rm -f "$resolv" || true
         ln -s /run/systemd/resolve/stub-resolv.conf "$resolv" 2>/dev/null || true
     fi
 
-    # Remove provision assets
+    # Remove provision assets and QEMU binary
     rm -rf "${MOUNT_DIR}/opt/provision" || true
-
-    # Remove QEMU binary from chroot
     rm -f "${MOUNT_DIR}/usr/bin/qemu-aarch64-static" || true
+
+    # NOW unmount boot and root
+    if mountpoint -q "${MOUNT_DIR}/boot/firmware" 2>/dev/null; then
+        umount "${MOUNT_DIR}/boot/firmware" || true
+    fi
+    if mountpoint -q "${MOUNT_DIR}" 2>/dev/null; then
+        umount "${MOUNT_DIR}" || true
+    fi
 
     # Tear down kpartx and loop device
     if [[ "$KPARTX_MAPPED" == true && -n "$LOOP_DEV" ]]; then
