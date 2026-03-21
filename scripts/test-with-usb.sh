@@ -5,60 +5,87 @@
 # /dev/bus/usb so the RTL-SDR dongle is accessible inside the chroot.
 #
 # Usage:
-#   sudo ./scripts/test-with-usb.sh              # interactive shell
-#   sudo ./scripts/test-with-usb.sh rtl_test -t  # run a specific command
-#   sudo ./scripts/test-with-usb.sh check-sdr.sh # run a check script
+#   ./scripts/test-with-usb.sh              # interactive shell
+#   ./scripts/test-with-usb.sh rtl_test -t  # run a specific command
+#   ./scripts/test-with-usb.sh check-sdr.sh # run the check script
+#
+# No sudo needed — re-launches itself inside a privileged Docker container.
 #
 # USB notes:
 #   If you get "device busy" errors, detach the host DVB driver first:
 #     sudo modprobe -r dvb_usb_rtl28xxu rtl2832 rtl2832_sdr
-#
-# Requires: kpartx, qemu-user-static registered with binfmt_misc
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-DATA_DIR="$PROJECT_DIR/data"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+
+# --- If not running inside Docker, re-exec via Docker ---
+if [[ ! -f /.dockerenv && "${IN_DOCKER:-}" != "1" ]]; then
+    PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+    # Determine tty flag
+    TTY_FLAG=""
+    if [[ -t 0 ]]; then
+        TTY_FLAG="-it"
+    fi
+
+    # Build the image name from compose config, fall back to building it
+    IMAGE_NAME=$(cd "$PROJECT_DIR" && docker compose config --images 2>/dev/null | tail -1) || true
+    if [[ -z "$IMAGE_NAME" ]] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+        echo "Building Docker image..."
+        (cd "$PROJECT_DIR" && docker compose build build)
+        IMAGE_NAME=$(cd "$PROJECT_DIR" && docker compose config --images 2>/dev/null | tail -1)
+    fi
+
+    exec docker run --rm $TTY_FLAG \
+        --privileged \
+        --device=/dev/bus/usb \
+        -e IN_DOCKER=1 \
+        -v "$PROJECT_DIR/data:/build/data" \
+        -v "$PROJECT_DIR/scripts:/build/scripts" \
+        -v "$PROJECT_DIR/test-scripts:/build/test-scripts" \
+        --entrypoint "/build/scripts/$SCRIPT_NAME" \
+        "$IMAGE_NAME" \
+        "$@"
+fi
+
+# --- Running inside Docker from here ---
+DATA_DIR="/build/data"
 MOUNT_DIR="/mnt/pi"
 
 # --- Preflight: root check ---
 if [[ $EUID -ne 0 ]]; then
-    echo "ERROR: This script must be run as root."
-    echo "  sudo $0 $*"
+    echo "ERROR: Not running as root inside container."
     exit 1
 fi
 
 # --- Preflight: required commands ---
 for cmd in losetup kpartx mount chroot; do
     if ! command -v "$cmd" &>/dev/null; then
-        echo "ERROR: '$cmd' not found. Install the required package."
+        echo "ERROR: '$cmd' not found."
         exit 1
     fi
 done
 
 if [[ ! -x /usr/bin/qemu-aarch64-static ]]; then
-    echo "ERROR: /usr/bin/qemu-aarch64-static not found or not executable."
-    echo "Install:  sudo apt install qemu-user-static"
-    echo "Register: sudo docker run --rm --privileged multiarch/qemu-user-static --reset -p yes"
+    echo "ERROR: /usr/bin/qemu-aarch64-static not found."
     exit 1
 fi
 
 # --- Find latest .img in data/ ---
 IMAGE=""
 if [[ -d "$DATA_DIR" ]]; then
-    # Pick the most recently modified .img file
     IMAGE=$(find "$DATA_DIR" -maxdepth 1 -name "*.img" ! -name "*.img.xz" -printf '%T@ %p\n' \
         2>/dev/null | sort -rn | head -1 | awk '{print $2}') || true
 fi
 
 if [[ -z "$IMAGE" ]]; then
-    # Check for compressed images and guide the user
     XZ_COUNT=$(find "$DATA_DIR" -maxdepth 1 -name "*.img.xz" 2>/dev/null | wc -l) || true
     if [[ "$XZ_COUNT" -gt 0 ]]; then
         echo "ERROR: No .img file found in $DATA_DIR"
         echo "Found .img.xz — decompress first:"
-        echo "  xz --decompress --keep $DATA_DIR/*.img.xz"
+        echo "  xz --decompress --keep data/*.img.xz"
     else
         echo "ERROR: No .img file found in $DATA_DIR"
         echo "Build the image first:"
@@ -194,22 +221,20 @@ QEMU_INSTALLED=true
 # --- Bind-mount USB and virtual filesystems ---
 echo ""
 echo "=== Bind-mount /dev/bus/usb /proc /sys /dev /dev/pts ==="
-# Track in reverse order for cleanup (last mounted = first unmounted)
 mount --bind /proc "${MOUNT_DIR}/proc"
 CHROOT_MOUNTS=("${MOUNT_DIR}/dev/pts" "${MOUNT_DIR}/dev" "${MOUNT_DIR}/sys" "${MOUNT_DIR}/proc")
 mount --bind /sys "${MOUNT_DIR}/sys"
 mount --bind /dev "${MOUNT_DIR}/dev"
 mount --bind /dev/pts "${MOUNT_DIR}/dev/pts"
 
-# USB passthrough — create mount point in chroot if needed
+# USB passthrough
 if [[ -d /dev/bus/usb ]]; then
     mkdir -p "${MOUNT_DIR}/dev/bus/usb"
     mount --bind /dev/bus/usb "${MOUNT_DIR}/dev/bus/usb"
-    # Prepend so it's unmounted first
     CHROOT_MOUNTS=("${MOUNT_DIR}/dev/bus/usb" "${CHROOT_MOUNTS[@]}")
     echo "  USB passthrough: /dev/bus/usb"
 else
-    echo "  WARNING: /dev/bus/usb not found on host — no USB passthrough"
+    echo "  WARNING: /dev/bus/usb not found — no USB passthrough"
 fi
 
 # --- Copy resolv.conf ---
@@ -233,12 +258,11 @@ echo "  SoapySDRUtil --find"
 echo ""
 
 if [[ $# -gt 0 ]]; then
-    CHROOT_CMD=("$@")
     chroot "${MOUNT_DIR}" env -i \
         HOME=/root \
         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         TERM="${TERM:-xterm}" \
-        "${CHROOT_CMD[@]}"
+        "$@"
 else
     chroot "${MOUNT_DIR}" env -i \
         HOME=/root \

@@ -58,21 +58,17 @@ Also includes: DVB kernel module blacklist, udev rules (from `librtlsdr` package
 
 ## Testing with a real dongle (no flashing needed)
 
-Plug in your RTL-SDR and test inside the built arm64 image via Docker:
+Plug in your RTL-SDR and test inside the built arm64 image. No sudo needed — the script launches itself inside a privileged Docker container:
 
 ```bash
 # Interactive shell
-docker run --rm -it --privileged --device=/dev/bus/usb \
-  -v ./data:/build/data -v ./scripts:/build/scripts \
-  --entrypoint /build/scripts/test-with-usb.sh \
-  $(docker compose config --images 2>/dev/null | tail -1)
+./scripts/test-with-usb.sh
 
 # Run a specific command
-docker run --rm --privileged --device=/dev/bus/usb \
-  -v ./data:/build/data -v ./scripts:/build/scripts -v ./test-scripts:/build/test-scripts \
-  --entrypoint /build/scripts/test-with-usb.sh \
-  $(docker compose config --images 2>/dev/null | tail -1) \
-  check-sdr.sh
+./scripts/test-with-usb.sh rtl_test -t
+
+# Run the full check script
+./scripts/test-with-usb.sh check-sdr.sh
 ```
 
 Inside the chroot:
