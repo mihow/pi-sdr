@@ -1,98 +1,137 @@
 # pi-sdr
 
-Minimal Raspberry Pi 5 image builder for Software-Defined Radio. Produces a flashable image with RTL-SDR V4 drivers and Tailscale pre-installed.
+Minimal Raspberry Pi 5 image builder for Software-Defined Radio. Produces a flashable `.img.xz` with RTL-SDR V4 drivers, SoapySDR, and Tailscale pre-installed. No audio stack, no scanner config — just the SDR foundation.
 
 ## Quick start
 
-### Download pre-built image
-
-Grab `pi-sdr.img.xz` from the [latest release](../../releases/latest), then flash with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (recommended) or:
+### Build the image
 
 ```bash
-xz -d pi-sdr.img.xz
-sudo dd if=pi-sdr.img of=/dev/sdX bs=4M status=progress
-```
+git clone https://github.com/mihow/pi-sdr.git && cd pi-sdr
 
-### Build from source
-
-```bash
 # Optional: configure WiFi and Tailscale
 cp .env.example .env
 # Edit .env with your settings
 
-# Build (~20 min on first run)
+# Build the image
 docker compose run --rm build
-
-# Output: data/pi-sdr.img.xz
 ```
+
+Output: `data/raspios-trixie-arm64-lite-provisioned.img.xz` (~694 MB)
+
+For faster dev cycles, skip compression:
+
+```bash
+COMPRESS=false docker compose run --rm build
+```
+
+### Flash to SD card
+
+```bash
+xz -d data/raspios-trixie-arm64-lite-provisioned.img.xz
+sudo dd if=data/raspios-trixie-arm64-lite-provisioned.img of=/dev/sdX bs=4M status=progress
+```
+
+Or use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) with the `.img` file.
+
+Pre-built images are available from the [latest release](../../releases/latest).
 
 ## What's included
 
 | Component | Version | Notes |
 |-----------|---------|-------|
-| Raspberry Pi OS | Trixie arm64 lite | Debian 13, pinned release |
-| rtl-sdr | 2.0.2 | RTL-SDR Blog V4 support included |
+| Raspberry Pi OS | Trixie arm64 lite | Debian 13, pinned 2025-12-04 |
+| rtl-sdr | 2.0.2 | RTL-SDR Blog V4 support (packaged, no source build) |
 | SoapySDR | 0.8.1 | Universal SDR API |
-| SoapyRTLSDR | — | SoapySDR module for RTL-SDR |
-| Python 3 SoapySDR | — | `import SoapySDR` works |
-| Tailscale | latest stable | SSH from anywhere, no port forwarding |
+| SoapyRTLSDR | 0.3.3 | SoapySDR driver for RTL-SDR |
+| python3-soapysdr | 0.8.1 | `import SoapySDR` works out of the box |
+| Tailscale | latest stable | Remote access without port forwarding |
 
-Also: DVB kernel module blacklist, udev rules for non-root USB access.
+Also includes: DVB kernel module blacklist, udev rules (from `librtlsdr` package), test scripts at `/usr/local/bin/`.
 
-## Testing without flashing
+## Testing with a real dongle (no flashing needed)
 
-Forward your RTL-SDR USB dongle into the image via Docker:
-
-```bash
-./scripts/test-with-usb.sh
-```
-
-Then inside the chroot:
+Plug in your RTL-SDR and test inside the built arm64 image via Docker:
 
 ```bash
-# Detect dongle
-rtl_test -t
+# Interactive shell
+docker run --rm -it --privileged --device=/dev/bus/usb \
+  -v ./data:/build/data -v ./scripts:/build/scripts \
+  --entrypoint /build/scripts/test-with-usb.sh \
+  $(docker compose config --images 2>/dev/null | tail -1)
 
-# List SDR devices
-SoapySDRUtil --find
-
-# Tune to a frequency and record 10s of IQ samples
-./test-scripts/tune.sh 462.5625e6 10
-
-# Quick scanner test (requires rtl_airband — not included, install separately)
-# rtl_airband -t -c /path/to/config.conf
+# Run a specific command
+docker run --rm --privileged --device=/dev/bus/usb \
+  -v ./data:/build/data -v ./scripts:/build/scripts -v ./test-scripts:/build/test-scripts \
+  --entrypoint /build/scripts/test-with-usb.sh \
+  $(docker compose config --images 2>/dev/null | tail -1) \
+  check-sdr.sh
 ```
+
+Inside the chroot:
+
+```bash
+rtl_test -t                        # Detect dongle, check tuner
+SoapySDRUtil --find                # List SDR devices via SoapySDR
+check-sdr.sh                       # Full device/driver check
+tune.sh 462.5625e6 -d 5            # Capture 5s of IQ from GMRS ch1
+scan.sh 88e6 108e6 -o fm_band.csv  # Sweep FM broadcast band
+```
+
+## Test scripts
+
+These are installed to `/usr/local/bin/` on the Pi image:
+
+| Script | Purpose |
+|--------|---------|
+| `check-sdr.sh` | Checks USB device, kernel modules, rtl-sdr, SoapySDR, Python bindings |
+| `tune.sh <freq> [-s rate] [-d sec] [-o file]` | Tune to a frequency and capture raw IQ samples |
+| `scan.sh <start> <end> [-b bin] [-n sweeps] [-o file]` | Sweep a frequency range with `rtl_power`, output CSV |
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set:
+Copy `.env.example` to `.env`:
 
 ```bash
-# WiFi (optional)
+# WiFi (optional — leave blank for ethernet only)
 WIFI_SSID=MyNetwork
 WIFI_PASSWORD=secret
 WIFI_COUNTRY=US
 
-# Tailscale (optional — authenticate on first boot)
+# Tailscale (optional — authenticate manually on first boot if blank)
 TAILSCALE_AUTHKEY=tskey-auth-...
 ```
 
-## Building downstream projects
+Build-time options (env vars passed to `docker compose run`):
 
-This image is designed as a foundation. Install additional software on top:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COMPRESS` | `true` | Set `false` to skip xz compression |
+| `DEBUG` | — | Set `1` for verbose build output (`set -x`) |
+
+## How the build works
+
+1. Docker container (Ubuntu 24.04) with QEMU user-mode emulation
+2. Downloads pinned Raspberry Pi OS Trixie arm64 lite image
+3. Expands the root partition by 2 GB
+4. Mounts via `kpartx` and chroots with QEMU aarch64
+5. `apt install rtl-sdr soapysdr-tools ...` (no source compilation)
+6. Installs Tailscale, DVB blacklist, WiFi config, test scripts
+7. Cleans up and compresses to `.img.xz`
+
+## CI/CD
+
+GitHub Actions builds and publishes `.img.xz` to Releases on tag push:
 
 ```bash
-# SSH in via Tailscale
-ssh pi@pi-sdr
-
-# Example: install rtl_airband for scanning
-sudo apt install libfftw3-dev libpulse-dev libconfig++-dev
-git clone https://github.com/rtl-airband/RTLSDR-Airband.git
-cd RTLSDR-Airband && mkdir build && cd build
-cmake .. -DNFM=ON -DSOAPYSDR=ON && make -j4 && sudo make install
-
-# Example: install PipeWire audio stack
-sudo apt install pipewire pipewire-pulse wireplumber
+git tag v0.1.0 && git push --tags
 ```
 
-See [pi-radio-station](https://github.com/mihow/pi-radio-station) for a full monitoring station build.
+## Downstream projects
+
+This image is a foundation. Install additional software on top:
+
+- [OpenWebRX+](https://www.openwebrx.de/) — web-based SDR receiver with waterfall
+- [trunk-recorder](https://github.com/robotastic/trunk-recorder) — trunked radio system recorder
+- [rtl_airband](https://github.com/rtl-airband/RTLSDR-Airband) — aviation scanner
+- [pi-radio-station](https://github.com/mihow/pi-radio-station) — full monitoring station with audio mixing
