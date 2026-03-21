@@ -1,0 +1,27 @@
+services:
+  # One-time: registers aarch64 binfmt handler on host kernel.
+  # Persists until reboot. Safe to re-run.
+  binfmt:
+    image: multiarch/qemu-user-static
+    command: ["--reset", "-p", "yes"]
+    privileged: true
+
+  build:
+    build: .
+    privileged: true
+    depends_on:
+      binfmt:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - TAILSCALE_AUTHKEY
+      - WIFI_SSID
+      - WIFI_PASSWORD
+      - WIFI_COUNTRY
+    volumes:
+      - ./data:/build/data
+      - ./scripts:/build/scripts
+      - ./config:/build/config
+      - ./test-scripts:/build/test-scripts
