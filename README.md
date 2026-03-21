@@ -155,5 +155,5 @@ This image is a foundation. Install additional software on top:
 - [OpenWebRX+](https://www.openwebrx.de/) — web-based SDR receiver with waterfall
 - [trunk-recorder](https://github.com/robotastic/trunk-recorder) — trunked radio system recorder
 - [rtl_airband](https://github.com/rtl-airband/RTLSDR-Airband) — aviation scanner
-- [signal-logs](https://github.com/mihow/signal-logs) — signal logging and analysis
+- [signal-logs](https://github.com/mihow/signal-logs) — passive radio monitoring with AI-powered transcription and summarization
 - [pi-radio-station](https://github.com/mihow/pi-radio-station) — full monitoring station with audio mixing
