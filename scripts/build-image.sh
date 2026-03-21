@@ -268,6 +268,22 @@ if [[ -L "${MOUNT_DIR}/etc/resolv.conf" ]]; then
 fi
 cp /etc/resolv.conf "${MOUNT_DIR}/etc/resolv.conf"
 
+# --- Enable SSH ---
+echo ""
+echo "=== Enable SSH ==="
+touch "${MOUNT_DIR}/boot/firmware/ssh"
+echo "  Created /boot/firmware/ssh"
+
+# --- Set pi user password ---
+echo ""
+echo "=== Set pi user password ==="
+# Generate hashed password and write to userconf.txt for first-boot user setup.
+# Pi OS Trixie uses this file to set up the default user on first boot.
+PI_PASSWORD="picketfencing"
+PI_HASH=$(openssl passwd -6 "$PI_PASSWORD")
+echo "pi:${PI_HASH}" > "${MOUNT_DIR}/boot/firmware/userconf.txt"
+echo "  Written to /boot/firmware/userconf.txt (pi:picketfencing)"
+
 # --- WiFi configuration ---
 if [[ -n "$WIFI_SSID" ]]; then
     echo ""

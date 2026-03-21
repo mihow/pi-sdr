@@ -53,6 +53,16 @@ apt-get install -y \
     soapysdr-module-rtlsdr \
     python3-soapysdr
 
+# --- Enable SSH ---
+echo "=== Enable SSH ==="
+apt-get install -y openssh-server
+systemctl enable ssh.service || ln -sf \
+    /lib/systemd/system/ssh.service \
+    /etc/systemd/system/multi-user.target.wants/ssh.service
+
+# Set pi user password (matches userconf.txt on boot partition)
+echo "pi:picketfencing" | chpasswd
+
 # --- DVB kernel module blacklist ---
 # DVB modules claim the RTL-SDR chip at boot; blacklisting hands it to rtl-sdr.
 echo "=== Install DVB blacklist ==="
