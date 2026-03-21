@@ -87,6 +87,31 @@ EOF
         /etc/systemd/system/multi-user.target.wants/tailscale-firstboot.service
 fi
 
+# --- Tailscale HTTPS cert for OpenWebRX+ ---
+# Generates a real Let's Encrypt cert via Tailscale on first boot.
+# Browsers require HTTPS for web audio — without this, no sound.
+cat > /etc/systemd/system/tailscale-cert.service << 'CERTSERVICE'
+[Unit]
+Description=Generate Tailscale HTTPS certificate for OpenWebRX+
+After=tailscale-firstboot.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Wait for Tailscale to be fully connected
+ExecStartPre=/bin/sh -c 'until tailscale status --json | grep -q "BackendState.*Running"; do sleep 2; done'
+ExecStart=/bin/sh -c 'FQDN=$(tailscale status --self --json | python3 -c "import sys,json; print(json.load(sys.stdin)[\"Self\"][\"DNSName\"].rstrip(\".\"))") && tailscale cert --cert-file /opt/openwebrx/etc/openwebrx/cert.pem --key-file /opt/openwebrx/etc/openwebrx/key.pem "$FQDN"'
+ExecStartPost=/usr/bin/docker restart openwebrx 2>/dev/null
+ExecStartPost=/bin/systemctl disable tailscale-cert.service
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+CERTSERVICE
+systemctl enable tailscale-cert.service || ln -sf \
+    /etc/systemd/system/tailscale-cert.service \
+    /etc/systemd/system/multi-user.target.wants/tailscale-cert.service
+
 # --- OpenWebRX+ (Docker) ---
 # The OpenWebRX+ PPA requires Python < 3.12 (python3-csdr dependency), but
 # Trixie ships Python 3.13. Instead of native install, we run OpenWebRX+ as a
