@@ -1,22 +1,23 @@
 """
-Core scanner engine. Controls OpenWebRX+ via WebSocket to scan frequencies,
-detect signals, and identify voice transmissions.
+Core scanner engine. Uses direct SDR access via SoapySDR to scan frequencies,
+detect signals via wideband FFT, and identify voice transmissions.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import ssl
-import struct
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-import websocket
-
-from .frequencies import get_default_scan_list
+from .audio_stream import AudioBroadcaster
+from .demod import demod_channel
+from .fft_scan import compute_channel_power
+from .frequencies import get_band_windows, get_default_scan_list
+from .recorder import VoiceRecorder
+from .sdr_backend import SdrBackend
 from .voice_detect import Detection, VoiceDetector
 
 log = logging.getLogger(__name__)
@@ -50,45 +51,38 @@ class ScannerState:
     scan_speed: float = 0.5  # seconds per channel when no signal
     voice_hold_time: float = 5.0  # seconds to stay on voice after it stops
     squelch_level: float = -45.0  # dB, signals above this are "active"
+    # New fields for direct SDR scanning
+    sdr_connected: bool = False
+    current_band: str = ""
+    scan_index: int = 0
+    scan_total: int = 0
+    channel_dwell_start: float = 0.0
+    activity_log: deque = field(default_factory=lambda: deque(maxlen=100))
+    scan_cycle_time: float = 0.0
 
 
 class Scanner:
     """
-    Frequency scanner that uses OpenWebRX+ WebSocket for SDR control.
+    Frequency scanner that uses direct SDR access for wideband scanning.
 
-    Connects to OpenWebRX+, cycles through frequencies, detects signals
-    via S-meter, and identifies voice using spectral analysis + VAD.
+    Tunes the SDR to band windows, performs FFT-based signal detection
+    across all channels simultaneously, and identifies voice using
+    spectral analysis + VAD on FM-demodulated audio.
     """
 
-    # Map frequency groups to OpenWebRX+ profile names and center frequencies
-    PROFILES = {
-        "GMRS": {"name": "GMRS/FRS", "center": 462_562_500, "bw": 2_400_000},
-        "FRS": {"name": "GMRS/FRS", "center": 462_562_500, "bw": 2_400_000},
-        "HAM 2m": {"name": "2m Ham", "center": 146_000_000, "bw": 2_400_000},
-        "HAM 70cm": {"name": "70cm Ham", "center": 446_000_000, "bw": 2_400_000},
-        "MURS": {"name": "Marine VHF", "center": 157_000_000, "bw": 2_400_000},
-        "Marine": {"name": "Marine VHF", "center": 157_000_000, "bw": 2_400_000},
-        "NOAA": {"name": "NOAA Weather", "center": 162_475_000, "bw": 2_400_000},
-    }
-
-    def __init__(self, owrx_host: str = "localhost", owrx_port: int = 8073, use_ssl: bool = False):
-        scheme = "wss" if use_ssl else "ws"
-        self.owrx_url = f"{scheme}://{owrx_host}:{owrx_port}/ws/"
-        self.use_ssl = use_ssl
+    def __init__(
+        self,
+        backend: SdrBackend,
+        broadcaster: AudioBroadcaster | None = None,
+        recorder: VoiceRecorder | None = None,
+    ):
+        self.backend = backend
+        self.broadcaster = broadcaster
+        self.recorder = recorder
         self.state = ScannerState()
         self.detector = VoiceDetector(sample_rate=16000)
-        self.ws: websocket.WebSocket | None = None
         self._scan_thread: threading.Thread | None = None
-        self._recv_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._audio_buffer = bytearray()
-        self._lock = threading.Lock()
-        self._connected = threading.Event()
-        self._smeter_updated = threading.Event()
-        self._current_profile: str | None = None
-        self._current_center: int = 0
-        self._sdr_id: str = ""
-        self._profiles_map: dict = {}  # profile_name -> profile_id
 
         # Load default channels
         for ch in get_default_scan_list():
@@ -100,214 +94,9 @@ class Scanner:
                 bandwidth=ch.get("bandwidth", 12500),
             )
 
-    def _reconnect(self):
-        """Reconnect to OpenWebRX+ WebSocket."""
-        try:
-            if self.ws:
-                self.ws.close()
-        except Exception:
-            pass
-        time.sleep(1)
-        try:
-            self.connect()
-        except Exception as e:
-            log.error("Reconnect failed: %s", e)
-
     def _get_scan_list(self) -> list[ChannelState]:
-        """Get ordered list of non-skipped channels, grouped by profile to minimize switches."""
-        channels = [ch for ch in self.state.channels.values() if not ch.skip]
-        # Sort by profile name so all channels in one band are scanned together
-        profile_order = list(self.PROFILES.keys())
-        channels.sort(key=lambda c: (
-            profile_order.index(c.group) if c.group in profile_order else 99,
-            c.freq,
-        ))
-        return channels
-
-    def connect(self):
-        """Connect to OpenWebRX+ WebSocket."""
-        log.info("Connecting to %s", self.owrx_url)
-        sslopt = {}
-        if self.use_ssl:
-            sslopt = {"cert_reqs": ssl.CERT_NONE, "check_hostname": False}
-        self.ws = websocket.WebSocket(sslopt=sslopt)
-        self.ws.connect(self.owrx_url)
-
-        # Handshake
-        self.ws.send("SERVER DE CLIENT client=radio-scanner type=receiver")
-        log.info("Connected to OpenWebRX+")
-        self._connected.set()
-
-        # Start receiving thread
-        self._recv_thread = threading.Thread(target=self._receive_loop, daemon=True)
-        self._recv_thread.start()
-
-    def _receive_loop(self):
-        """Background thread: receive WebSocket messages."""
-        text_count = 0
-        binary_count = 0
-        while not self._stop_event.is_set():
-            try:
-                opcode, data = self.ws.recv_data()
-                if opcode == websocket.ABNF.OPCODE_TEXT:
-                    text_count += 1
-                    self._handle_text(data.decode("utf-8"))
-                elif opcode == websocket.ABNF.OPCODE_BINARY:
-                    binary_count += 1
-                    self._handle_binary(data)
-                    if binary_count % 100 == 1:
-                        log.debug("Recv stats: %d text, %d binary", text_count, binary_count)
-                else:
-                    log.debug("Unknown opcode: %d len=%d", opcode, len(data))
-            except websocket.WebSocketConnectionClosedException:
-                log.warning("WebSocket connection closed (text=%d bin=%d)", text_count, binary_count)
-                break
-            except Exception as e:
-                if not self._stop_event.is_set():
-                    log.error("Receive error: %s (text=%d bin=%d)", e, text_count, binary_count)
-                break
-
-    def _handle_text(self, message: str):
-        """Handle JSON text messages from OpenWebRX+."""
-        try:
-            msg = json.loads(message)
-        except json.JSONDecodeError:
-            # Might be the handshake response
-            if "CLIENT DE SERVER" in message:
-                log.info("Handshake: %s", message)
-            return
-
-        msg_type = msg.get("type")
-        if msg_type == "smeter":
-            raw = msg["value"]
-            # OpenWebRX+ sends raw linear power — convert to dB
-            import math
-            if raw > 0:
-                self.state.current_smeter = 10 * math.log10(raw)
-            else:
-                self.state.current_smeter = -120.0
-            self._smeter_updated.set()
-        elif msg_type == "config":
-            val = msg.get("value", {})
-            log.debug("Config: %s", json.dumps(val)[:200])
-        elif msg_type == "profiles":
-            # Capture available profiles: list of {"name", "id", ...}
-            profiles = msg.get("value", [])
-            for p in profiles:
-                pid = p.get("id", "")
-                pname = p.get("name", "")
-                self._profiles_map[pname] = pid
-                # Extract SDR ID from profile ID (format: "sdr_id|profile_id")
-                if "|" in pid and not self._sdr_id:
-                    self._sdr_id = pid.split("|")[0]
-            log.info("Profiles: %s", list(self._profiles_map.keys()))
-        elif msg_type == "sdr_error":
-            log.error("SDR error: %s", msg.get("value"))
-
-    def _handle_binary(self, data: bytes):
-        """Handle binary messages (audio, FFT) from OpenWebRX+."""
-        if len(data) < 1:
-            return
-        msg_type = data[0]
-        if msg_type == 0x02:
-            # Demodulated audio: 16-bit signed LE PCM at output_rate
-            audio = data[1:]
-            with self._lock:
-                self._audio_buffer.extend(audio)
-                if len(self._audio_buffer) % 5000 < len(audio):
-                    log.debug("Audio buffer: %d bytes (+%d)", len(self._audio_buffer), len(audio))
-        elif msg_type == 0x01:
-            pass  # FFT data, ignore
-        else:
-            if not hasattr(self, '_bin_type_seen'):
-                self._bin_type_seen = set()
-            if msg_type not in self._bin_type_seen:
-                self._bin_type_seen.add(msg_type)
-                log.info("Binary type seen: 0x%02x len=%d (first occurrence)", msg_type, len(data))
-
-    def _find_profile_id(self, target_name: str) -> str | None:
-        """Find profile ID by partial name match."""
-        # Exact match first
-        if target_name in self._profiles_map:
-            return self._profiles_map[target_name]
-        # Partial match (profiles are prefixed with SDR name)
-        for name, pid in self._profiles_map.items():
-            if target_name in name or name.endswith(target_name):
-                return pid
-        return None
-
-    def _select_profile(self, group: str):
-        """Switch OpenWebRX+ to the SDR profile covering this frequency group."""
-        profile_info = self.PROFILES.get(group)
-        if not profile_info:
-            return
-        profile_name = profile_info["name"]
-        if profile_name == self._current_profile:
-            return
-
-        # Find profile ID
-        profile_id = self._find_profile_id(profile_name)
-        if profile_id:
-            log.info("Switching to profile: %s (%s)", profile_name, profile_id)
-            try:
-                self.ws.send(json.dumps({"type": "selectprofile", "params": {"profile": profile_id}}))
-            except Exception as e:
-                log.warning("Profile switch failed: %s", e)
-                return
-            self._current_profile = profile_name
-            self._current_center = profile_info["center"]
-            time.sleep(0.5)  # let SDR retune
-            self._start_dsp()  # restart DSP after profile switch
-            time.sleep(0.3)
-        else:
-            if self._profiles_map:
-                log.warning("Profile not found: %s (available: %s)", profile_name, list(self._profiles_map.keys()))
-            self._current_center = profile_info["center"]
-            self._current_profile = profile_name
-
-    def _tune(self, freq: int, mod: str = "nfm", bandwidth: int = 12500, group: str = ""):
-        """Tune OpenWebRX+ to a frequency."""
-        # Switch profile if needed
-        self._select_profile(group)
-
-        half_bw = bandwidth // 2
-        offset = freq - self._current_center if self._current_center else freq
-        params = {
-            "type": "dspcontrol",
-            "action": "start",
-            "params": {
-                "mod": mod,
-                "offset_freq": offset,
-                "low_cut": -half_bw,
-                "high_cut": half_bw,
-                "squelch_level": -150,
-                "output_rate": 16000,
-            },
-        }
-        try:
-            self.ws.send(json.dumps(params))
-        except Exception as e:
-            log.warning("Send failed: %s, reconnecting...", e)
-            self._reconnect()
-        self.state.current_freq = freq
-
-    def _process_audio(self) -> tuple[Detection, float]:
-        """Process buffered audio through voice detector. Returns (detection, confidence)."""
-        with self._lock:
-            buf = bytes(self._audio_buffer)
-            self._audio_buffer.clear()
-
-        if len(buf) < self.detector.frame_bytes:
-            return self.detector.get_decision()
-
-        # Process all complete frames
-        offset = 0
-        while offset + self.detector.frame_bytes <= len(buf):
-            frame = buf[offset:offset + self.detector.frame_bytes]
-            self.detector.process_frame(frame)
-            offset += self.detector.frame_bytes
-
-        return self.detector.get_decision()
+        """Get list of non-skipped channels."""
+        return [ch for ch in self.state.channels.values() if not ch.skip]
 
     def start_scanning(self):
         """Start the scan loop in a background thread."""
@@ -325,140 +114,229 @@ class Scanner:
         self._stop_event.set()
         log.info("Scanning stopped")
 
-    def _start_dsp(self):
-        """Send initial DSP start command to OpenWebRX+."""
-        params = {
-            "type": "dspcontrol",
-            "action": "start",
-            "params": {
-                "mod": "nfm",
-                "offset_freq": 0,
-                "low_cut": -12500,
-                "high_cut": 12500,
-                "squelch_level": -150,
-                "output_rate": 16000,
-            },
-        }
-        try:
-            self.ws.send(json.dumps(params))
-            log.info("DSP started")
-        except Exception as e:
-            log.error("Failed to start DSP: %s", e)
-
     def _scan_loop(self):
-        """Main scan loop: cycle through frequencies, detect voice."""
-        # Wait for profiles to arrive from OpenWebRX+
-        for _ in range(20):
-            if self._profiles_map:
-                break
-            time.sleep(0.2)
-        if not self._profiles_map:
-            log.warning("No profiles received from OpenWebRX+ after 4s")
+        """Main scan loop: for each band window, tune, read IQ, FFT, check channels."""
+        windows = get_band_windows(self.backend.get_max_bandwidth())
 
+        # Count total channels across all windows for progress tracking
         scan_list = self._get_scan_list()
-        if not scan_list:
+        scan_freqs = {ch.freq for ch in scan_list}
+        self.state.scan_total = sum(
+            len([c for c in w["channels"] if c["freq"] in scan_freqs])
+            for w in windows
+        )
+
+        if self.state.scan_total == 0:
             log.warning("No channels to scan")
             return
 
-        idx = 0
+        self.state.sdr_connected = self.backend.is_open()
+        log.info(
+            "Scan loop starting: %d windows, %d channels",
+            len(windows), self.state.scan_total,
+        )
+
         while not self._stop_event.is_set():
+            cycle_start = time.monotonic()
+
+            # Refresh scan list each cycle (skip states may change)
             scan_list = self._get_scan_list()
-            if not scan_list:
-                time.sleep(1)
-                continue
+            scan_freqs = {ch.freq for ch in scan_list}
+            self.state.scan_index = 0
 
-            idx = idx % len(scan_list)
-            ch = scan_list[idx]
+            for window in windows:
+                if self._stop_event.is_set():
+                    break
 
-            # Tune to channel
-            self._tune(ch.freq, ch.mod, ch.bandwidth, ch.group)
-            self.state.current_channel = ch.name
-            self.state.current_detection = "pending"
-            self.detector.reset()
+                # Get channels for this window that are not skipped
+                window_channels = [
+                    self.state.channels[c["freq"]]
+                    for c in window["channels"]
+                    if c["freq"] in scan_freqs and c["freq"] in self.state.channels
+                ]
+                if not window_channels:
+                    continue
 
-            # Clear audio buffer
-            with self._lock:
-                self._audio_buffer.clear()
+                # Tune to band center
+                try:
+                    self.backend.tune(window["center"])
+                except Exception as e:
+                    log.error("Tune failed for %s: %s", window["name"], e)
+                    self.state.sdr_connected = False
+                    continue
 
-            # Wait for S-meter reading
-            self._smeter_updated.clear()
-            self._smeter_updated.wait(timeout=0.3)
+                self.state.current_band = window["name"]
+                self.state.sdr_connected = True
+                time.sleep(0.05)  # settling time after retune
 
-            smeter = self.state.current_smeter
-            ch.last_smeter = smeter
+                # Read IQ and FFT scan all channels in this window
+                try:
+                    iq = self.backend.read_iq(262144)
+                except Exception as e:
+                    log.error("IQ read failed for %s: %s", window["name"], e)
+                    self.state.sdr_connected = False
+                    continue
 
-            if smeter > self.state.squelch_level:
-                # Signal detected! Dwell and analyze
-                ch.last_signal = datetime.now(timezone.utc)
-                ch.signal_count += 1
-                log.info("Signal on %s (%.3f MHz) S=%.1f dB",
-                         ch.name, ch.freq / 1e6, smeter)
+                powers = compute_channel_power(
+                    iq,
+                    self.backend.get_sample_rate(),
+                    window["center"],
+                    [ch.freq for ch in window_channels],
+                    [ch.bandwidth for ch in window_channels],
+                )
 
-                voice_found = self._dwell_and_detect(ch)
-                if voice_found:
-                    ch.last_voice = datetime.now(timezone.utc)
-                    ch.voice_count += 1
-                    self.state.paused_on_voice = True
-                    self.state.current_detection = "voice"
-                    log.info("VOICE on %s (%.3f MHz)!", ch.name, ch.freq / 1e6)
+                # Update S-meter for all channels
+                for ch in window_channels:
+                    if ch.freq in powers:
+                        ch.last_smeter = powers[ch.freq]
+                        self.state.scan_index += 1
 
-                    # Hold on voice until it stops
-                    self._hold_on_voice(ch)
-                    self.state.paused_on_voice = False
-            else:
-                self.state.current_detection = "noise"
+                # Check for active signals
+                for ch in window_channels:
+                    if self._stop_event.is_set():
+                        break
 
-            # Move to next channel
-            idx += 1
-            if not self.state.paused_on_voice:
-                time.sleep(max(0, self.state.scan_speed - 0.3))
+                    if ch.freq not in powers:
+                        continue
 
-    def _dwell_and_detect(self, ch: ChannelState, dwell_seconds: float = 2.0) -> bool:
-        """Listen on a channel for dwell_seconds, return True if voice detected."""
-        start = time.monotonic()
-        last_log = 0.0
-        while time.monotonic() - start < dwell_seconds and not self._stop_event.is_set():
-            time.sleep(0.15)
-            detection, confidence = self._process_audio()
-            self.state.current_detection = detection.value
-            self.state.current_confidence = confidence
+                    if powers[ch.freq] > self.state.squelch_level:
+                        # Signal detected
+                        ch.last_signal = datetime.now(timezone.utc)
+                        ch.signal_count += 1
+                        self.state.current_freq = ch.freq
+                        self.state.current_channel = ch.name
+                        self.state.current_smeter = powers[ch.freq]
+                        self._log_activity("signal", ch, powers[ch.freq])
 
-            # Log detection progress periodically
-            now = time.monotonic()
-            if now - last_log > 0.5:
-                audio_len = len(self._audio_buffer)
-                window_len = len(self.detector.window)
-                log.debug("  %s: det=%s conf=%.2f audio_buf=%d window=%d",
-                         ch.name, detection.value, confidence, audio_len, window_len)
-                last_log = now
+                        log.info(
+                            "Signal on %s (%.3f MHz) S=%.1f dB",
+                            ch.name, ch.freq / 1e6, powers[ch.freq],
+                        )
 
-            if detection == Detection.VOICE and confidence >= 0.3:
-                return True
-            if detection == Detection.DIGITAL and confidence >= 0.5:
-                log.info("Digital signal on %s (conf=%.2f), skipping", ch.name, confidence)
-                return False
-        # Log final decision
-        log.debug("  %s: dwell complete, final=%s conf=%.2f", ch.name, detection.value, confidence)
+                        # Demod for voice detection
+                        audio = demod_channel(
+                            iq, self.backend.get_sample_rate(),
+                            window["center"], ch.freq, ch.bandwidth,
+                        )
+
+                        voice_found = self._analyze_audio(ch, audio)
+                        if voice_found:
+                            self._hold_on_voice(ch, window)
+
+            self.state.scan_cycle_time = time.monotonic() - cycle_start
+            self.state.scan_index = 0
+
+    def _analyze_audio(self, ch: ChannelState, audio) -> bool:
+        """Process demodulated audio through voice detector.
+
+        Args:
+            ch: Channel being analyzed.
+            audio: int16 PCM numpy array from demod_channel.
+
+        Returns:
+            True if voice detected.
+        """
+        self.detector.reset()
+        self.state.current_detection = "pending"
+
+        detection, confidence = self._process_audio_frames(audio)
+        self.state.current_detection = detection.value
+        self.state.current_confidence = confidence
+
+        if detection == Detection.VOICE and confidence >= 0.3:
+            ch.last_voice = datetime.now(timezone.utc)
+            ch.voice_count += 1
+            self._log_activity("voice", ch, ch.last_smeter, confidence=confidence)
+            log.info("VOICE on %s (%.3f MHz) conf=%.2f", ch.name, ch.freq / 1e6, confidence)
+            return True
+
+        if detection == Detection.DIGITAL and confidence >= 0.5:
+            log.info("Digital signal on %s (conf=%.2f), skipping", ch.name, confidence)
+
         return False
 
-    def _hold_on_voice(self, ch: ChannelState, max_hold: float = 60.0):
-        """Stay on frequency while voice is active, leave after hold_time of silence."""
+    def _process_audio_frames(self, audio) -> tuple[Detection, float]:
+        """Split int16 PCM numpy array into 30ms frames and feed to VoiceDetector.
+
+        Args:
+            audio: int16 numpy array of PCM audio at 16kHz.
+
+        Returns:
+            (Detection, confidence) from the voice detector.
+        """
+        frame_samples = self.detector.frame_samples  # 480 at 16kHz, 30ms
+        audio_bytes = audio.tobytes()
+
+        offset = 0
+        while offset + self.detector.frame_bytes <= len(audio_bytes):
+            frame = audio_bytes[offset : offset + self.detector.frame_bytes]
+            self.detector.process_frame(frame)
+            offset += self.detector.frame_bytes
+
+        return self.detector.get_decision()
+
+    def _hold_on_voice(self, ch: ChannelState, window: dict, max_hold: float = 60.0):
+        """Stay on frequency, continuously demod + stream audio."""
+        # Play channel ID beep
+        if self.broadcaster:
+            self.broadcaster.push_tone(freq_hz=800, duration_ms=150)
+
+        # Start recording
+        if self.recorder:
+            self.recorder.start_recording(ch.name, ch.freq)
+
         last_voice_time = time.monotonic()
         last_signal_time = time.monotonic()
         hold_start = time.monotonic()
+        self.state.channel_dwell_start = hold_start
+        self.state.paused_on_voice = True
+        self.state.current_freq = ch.freq
+        self.state.current_channel = ch.name
+        self.state.current_detection = "voice"
+
+        log.info("Holding on %s (%.3f MHz)", ch.name, ch.freq / 1e6)
 
         while not self._stop_event.is_set():
-            time.sleep(0.2)
-            detection, confidence = self._process_audio()
+            # Read fresh IQ
+            try:
+                iq = self.backend.read_iq(65536)  # ~27ms at 2.4 Msps
+            except Exception as e:
+                log.error("IQ read failed during hold: %s", e)
+                break
+
+            # Demod
+            audio = demod_channel(
+                iq, self.backend.get_sample_rate(),
+                window["center"], ch.freq, ch.bandwidth,
+            )
+            audio_bytes = audio.tobytes()
+
+            # Stream to browser
+            if self.broadcaster:
+                self.broadcaster.push_audio(audio_bytes)
+
+            # Record
+            if self.recorder and self.recorder.is_recording:
+                self.recorder.write_audio(audio_bytes)
+
+            # Voice detection
+            detection, confidence = self._process_audio_frames(audio)
             self.state.current_detection = detection.value
             self.state.current_confidence = confidence
 
             if detection == Detection.VOICE:
                 last_voice_time = time.monotonic()
 
-            # Track signal presence via S-meter
-            if self.state.current_smeter > self.state.squelch_level:
-                last_signal_time = time.monotonic()
+            # Check signal level via FFT on the small IQ block
+            powers = compute_channel_power(
+                iq, self.backend.get_sample_rate(),
+                window["center"], [ch.freq], [ch.bandwidth],
+            )
+            if ch.freq in powers:
+                ch.last_smeter = powers[ch.freq]
+                self.state.current_smeter = powers[ch.freq]
+                if powers[ch.freq] > self.state.squelch_level:
+                    last_signal_time = time.monotonic()
 
             # Release if signal has been gone for 2 seconds
             if time.monotonic() - last_signal_time > 2.0:
@@ -470,10 +348,34 @@ class Scanner:
                 log.info("Voice ended on %s, resuming scan", ch.name)
                 break
 
-            # Max hold time — prevent locking on carriers/repeaters forever
+            # Max hold time -- prevent locking on carriers/repeaters forever
             if time.monotonic() - hold_start > max_hold:
                 log.info("Max hold time on %s, resuming scan", ch.name)
                 break
+
+        self.state.paused_on_voice = False
+        self.state.channel_dwell_start = 0.0
+
+        if self.recorder and self.recorder.is_recording:
+            path = self.recorder.stop_recording()
+            if path:
+                duration = time.monotonic() - hold_start
+                self._log_activity(
+                    "recording", ch, duration=round(duration, 1), path=str(path),
+                )
+
+    def _log_activity(self, event_type: str, ch: ChannelState, power: float = 0, **kwargs):
+        """Append an event to the activity log."""
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "type": event_type,
+            "channel": ch.name,
+            "freq": ch.freq,
+            "power": round(power, 1),
+            **kwargs,
+        }
+        self.state.activity_log.append(entry)
+        log.debug("Activity: %s", entry)
 
     def toggle_skip(self, freq: int) -> bool:
         """Toggle skip status for a channel. Returns new skip state."""
@@ -506,6 +408,11 @@ class Scanner:
                 "active": ch.freq == self.state.current_freq,
             })
 
+        # Compute dwell elapsed time
+        dwell_elapsed = 0.0
+        if self.state.channel_dwell_start > 0:
+            dwell_elapsed = round(time.monotonic() - self.state.channel_dwell_start, 1)
+
         return {
             "scanning": self.state.scanning,
             "paused_on_voice": self.state.paused_on_voice,
@@ -519,13 +426,18 @@ class Scanner:
             "scan_speed": self.state.scan_speed,
             "voice_hold_time": self.state.voice_hold_time,
             "channels": channels,
+            # New fields
+            "sdr_connected": self.state.sdr_connected,
+            "current_band": self.state.current_band,
+            "scan_index": self.state.scan_index,
+            "scan_total": self.state.scan_total,
+            "channel_dwell_elapsed": dwell_elapsed,
+            "activity_log": list(self.state.activity_log),
+            "scan_cycle_time": round(self.state.scan_cycle_time, 2),
         }
 
     def shutdown(self):
         """Clean shutdown."""
         self.stop_scanning()
-        if self.ws:
-            try:
-                self.ws.close()
-            except Exception:
-                pass
+        if self.recorder and self.recorder.is_recording:
+            self.recorder.stop_recording()

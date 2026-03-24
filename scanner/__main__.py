@@ -1,5 +1,5 @@
 """
-Entry point: python -m scanner [--host OWRX_HOST] [--port OWRX_PORT] [--web-port WEB_PORT]
+Entry point: python -m scanner [--driver DRIVER] [--gain GAIN] [--web-port WEB_PORT]
 """
 
 import argparse
@@ -7,6 +7,8 @@ import logging
 import signal
 import sys
 
+from .sdr_backend import SoapySdrBackend
+from .audio_stream import AudioBroadcaster
 from .scanner import Scanner
 from .web import create_app
 
@@ -20,25 +22,40 @@ log = logging.getLogger("scanner")
 
 def main():
     parser = argparse.ArgumentParser(description="Radio Scanner")
-    parser.add_argument("--host", default="localhost", help="OpenWebRX+ host (default: localhost)")
-    parser.add_argument("--port", type=int, default=8073, help="OpenWebRX+ port (default: 8073)")
+    parser.add_argument("--driver", default="rtlsdr", help="SoapySDR driver (default: rtlsdr)")
+    parser.add_argument("--gain", type=float, default=None, help="SDR gain in dB (default: auto)")
+    parser.add_argument("--iq-file", default=None, help="IQ file for testing without hardware (uses FileSdrBackend)")
     parser.add_argument("--web-port", type=int, default=8080, help="Web dashboard port (default: 8080)")
-    parser.add_argument("--ssl", action="store_true", default=True, help="Use SSL/WSS (default: true)")
-    parser.add_argument("--no-ssl", action="store_true", help="Disable SSL")
     parser.add_argument("--squelch", type=float, default=-45, help="Squelch level in dB (default: -45)")
     parser.add_argument("--auto-start", action="store_true", help="Start scanning immediately")
+    parser.add_argument("--record", action="store_true", help="Enable voice recording to WAV files")
+    parser.add_argument("--record-dir", default="recordings", help="Directory for recordings (default: recordings)")
     args = parser.parse_args()
 
-    use_ssl = args.ssl and not args.no_ssl
-    scanner = Scanner(owrx_host=args.host, owrx_port=args.port, use_ssl=use_ssl)
+    # Create SDR backend
+    if args.iq_file:
+        from .test_e2e import FileSdrBackend
+        backend = FileSdrBackend(args.iq_file, sample_rate=2_400_000, center_freq=0)
+    else:
+        backend = SoapySdrBackend(driver=args.driver, gain=args.gain)
+
+    # Create audio broadcaster
+    broadcaster = AudioBroadcaster()
+
+    # Create voice recorder if enabled
+    recorder = None
+    if args.record:
+        from .recorder import VoiceRecorder
+        recorder = VoiceRecorder(output_dir=args.record_dir)
+
+    scanner = Scanner(backend=backend, broadcaster=broadcaster, recorder=recorder)
     scanner.set_squelch(args.squelch)
 
-    # Connect to OpenWebRX+
+    # Open SDR backend
     try:
-        scanner.connect()
+        backend.open()
     except Exception as e:
-        log.error("Failed to connect to OpenWebRX+ at %s:%d: %s", args.host, args.port, e)
-        log.error("Make sure OpenWebRX+ is running and accessible")
+        log.error("Failed to open SDR backend: %s", e)
         sys.exit(1)
 
     if args.auto_start:
@@ -48,6 +65,7 @@ def main():
     def shutdown(sig, frame):
         log.info("Shutting down...")
         scanner.shutdown()
+        backend.close()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown)

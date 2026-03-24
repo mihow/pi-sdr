@@ -2,3 +2,5 @@ data/
 *.img
 *.img.xz
 .env
+scanner/test_data/*.cf32
+scanner/test_data/*.json
