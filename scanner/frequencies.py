@@ -152,13 +152,80 @@ WX_SATELLITES = [
 
 # ISM / IoT bands
 ISM_433 = [
-    {"freq": 433_920_000, "name": "ISM 433.92", "mod": "nfm", "group": "ISM", "bandwidth": 25000},
+    {"freq": 433_920_000, "name": "ISM 433.92", "mod": "nfm", "group": "ISM 433", "bandwidth": 25000},
 ]
 
-# Default scan list: GMRS first (most likely voice), then HAM, then others
+# HAM 23cm band (1240-1300 MHz)
+HAM_23CM = [
+    {"freq": 1_294_500_000, "name": "23cm Simplex Call", "mod": "nfm", "group": "HAM 23cm", "bandwidth": 12500},
+    {"freq": 1_282_000_000, "name": "23cm Repeater", "mod": "nfm", "group": "HAM 23cm", "bandwidth": 12500},
+    {"freq": 1_284_000_000, "name": "23cm Repeater", "mod": "nfm", "group": "HAM 23cm", "bandwidth": 12500},
+    {"freq": 1_286_000_000, "name": "23cm Repeater", "mod": "nfm", "group": "HAM 23cm", "bandwidth": 12500},
+]
+
+# ISM 900 MHz band (902-928 MHz) — LoRa, smart meters, misc
+ISM_900 = [
+    {"freq": 902_000_000, "name": "ISM 902.0", "mod": "nfm", "group": "ISM 900", "bandwidth": 25000},
+    {"freq": 906_000_000, "name": "ISM 906.0", "mod": "nfm", "group": "ISM 900", "bandwidth": 25000},
+    {"freq": 910_000_000, "name": "ISM 910.0", "mod": "nfm", "group": "ISM 900", "bandwidth": 25000},
+    {"freq": 914_000_000, "name": "ISM 914.0", "mod": "nfm", "group": "ISM 900", "bandwidth": 25000},
+    {"freq": 915_000_000, "name": "ISM 915.0 Center", "mod": "nfm", "group": "ISM 900", "bandwidth": 25000},
+    {"freq": 918_000_000, "name": "ISM 918.0", "mod": "nfm", "group": "ISM 900", "bandwidth": 25000},
+    {"freq": 922_000_000, "name": "ISM 922.0", "mod": "nfm", "group": "ISM 900", "bandwidth": 25000},
+    {"freq": 926_000_000, "name": "ISM 926.0", "mod": "nfm", "group": "ISM 900", "bandwidth": 25000},
+]
+
+# ADS-B (1090 MHz) — aircraft transponders (not demodulable as NFM, but can detect signal presence)
+ADSB = [
+    {"freq": 1_090_000_000, "name": "ADS-B 1090", "mod": "nfm", "group": "ADS-B", "bandwidth": 25000},
+]
+
+# Public Safety UHF (common simplex/repeater, varies by area)
+PUBLIC_SAFETY = [
+    {"freq": 453_000_000, "name": "PS 453.0", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+    {"freq": 453_500_000, "name": "PS 453.5", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+    {"freq": 453_900_000, "name": "PS 453.9", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+    {"freq": 454_000_000, "name": "PS 454.0", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+    {"freq": 460_000_000, "name": "PS 460.0", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+    {"freq": 460_500_000, "name": "PS 460.5", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+    {"freq": 460_625_000, "name": "PS 460.625", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+    {"freq": 461_000_000, "name": "PS 461.0", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+    {"freq": 461_500_000, "name": "PS 461.5", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+    {"freq": 462_000_000, "name": "PS 462.0", "mod": "nfm", "group": "Public Safety", "bandwidth": 12500},
+]
+
+# Business / Industrial band (VHF 150-174 MHz)
+BUSINESS_VHF = [
+    {"freq": 151_625_000, "name": "Biz 151.625", "mod": "nfm", "group": "Business", "bandwidth": 12500},
+    {"freq": 151_955_000, "name": "Biz 151.955", "mod": "nfm", "group": "Business", "bandwidth": 12500},
+    {"freq": 152_240_000, "name": "Biz 152.240", "mod": "nfm", "group": "Business", "bandwidth": 12500},
+    {"freq": 154_515_000, "name": "Biz 154.515", "mod": "nfm", "group": "Business", "bandwidth": 12500},
+    {"freq": 154_540_000, "name": "Biz 154.540", "mod": "nfm", "group": "Business", "bandwidth": 12500},
+    {"freq": 158_400_000, "name": "Biz 158.400", "mod": "nfm", "group": "Business", "bandwidth": 12500},
+    {"freq": 159_000_000, "name": "Biz 159.0", "mod": "nfm", "group": "Business", "bandwidth": 12500},
+    {"freq": 173_225_000, "name": "Biz 173.225 Itinerant", "mod": "nfm", "group": "Business", "bandwidth": 12500},
+]
+
+# HAM 33cm band (902-928 MHz, shared with ISM)
+HAM_33CM = [
+    {"freq": 927_500_000, "name": "33cm Simplex", "mod": "nfm", "group": "HAM 33cm", "bandwidth": 12500},
+]
+
+# HAM 1.25m band (222-225 MHz)
+HAM_125M = [
+    {"freq": 223_500_000, "name": "1.25m Simplex Call", "mod": "nfm", "group": "HAM 1.25m", "bandwidth": 12500},
+    {"freq": 223_520_000, "name": "1.25m Simplex", "mod": "nfm", "group": "HAM 1.25m", "bandwidth": 12500},
+    {"freq": 224_000_000, "name": "1.25m Repeater", "mod": "nfm", "group": "HAM 1.25m", "bandwidth": 12500},
+    {"freq": 224_400_000, "name": "1.25m Repeater", "mod": "nfm", "group": "HAM 1.25m", "bandwidth": 12500},
+    {"freq": 224_800_000, "name": "1.25m Repeater", "mod": "nfm", "group": "HAM 1.25m", "bandwidth": 12500},
+]
+
+# Default scan list — all bands
 ALL_CHANNELS = (
-    GMRS_CHANNELS + FRS_EXTRA_CHANNELS + HAM_2M + HAM_70CM + MURS + MARINE
-    + NOAA_WEATHER + AIR_BAND + RAILROAD + FM_BROADCAST + WX_SATELLITES + ISM_433
+    FM_BROADCAST + AIR_BAND + WX_SATELLITES + HAM_2M + MURS + BUSINESS_VHF
+    + MARINE + RAILROAD + NOAA_WEATHER + HAM_125M + ISM_433 + HAM_70CM
+    + PUBLIC_SAFETY + GMRS_CHANNELS + FRS_EXTRA_CHANNELS + ISM_900 + HAM_33CM
+    + ADSB + HAM_23CM
 )
 
 
@@ -191,13 +258,20 @@ BAND_GROUPS = [
     {"name": "WX Sat", "groups": ["WX Sat"]},
     {"name": "HAM 2m", "groups": ["HAM 2m"]},
     {"name": "MURS", "groups": ["MURS"]},
+    {"name": "Business", "groups": ["Business"]},
     {"name": "Marine", "groups": ["Marine"]},
     {"name": "Railroad", "groups": ["Railroad"]},
     {"name": "NOAA", "groups": ["NOAA"]},
-    {"name": "ISM", "groups": ["ISM"]},
+    {"name": "HAM 1.25m", "groups": ["HAM 1.25m"]},
+    {"name": "ISM 433", "groups": ["ISM 433"]},
     {"name": "HAM 70cm", "groups": ["HAM 70cm"]},
+    {"name": "Public Safety", "groups": ["Public Safety"]},
     {"name": "GMRS", "groups": ["GMRS"]},
     {"name": "FRS", "groups": ["FRS"]},
+    {"name": "ISM 900", "groups": ["ISM 900"]},
+    {"name": "HAM 33cm", "groups": ["HAM 33cm"]},
+    {"name": "ADS-B", "groups": ["ADS-B"]},
+    {"name": "HAM 23cm", "groups": ["HAM 23cm"]},
 ]
 
 

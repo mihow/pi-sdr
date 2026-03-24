@@ -200,7 +200,20 @@ def demod_channel(
     Returns:
         int16 PCM audio at audio_rate.
     """
-    intermediate_rate = 48_000
+    # Adapt parameters based on channel bandwidth
+    if channel_bw >= 100_000:
+        # Wideband FM (broadcast): 75 kHz deviation, higher intermediate rate
+        intermediate_rate = 192_000
+        max_deviation = 75_000.0
+    elif channel_bw >= 20_000:
+        # Wide NFM (NOAA weather, some repeaters): 5 kHz deviation
+        intermediate_rate = 48_000
+        max_deviation = 5_000.0
+    else:
+        # Standard NFM: 2.5 kHz deviation
+        intermediate_rate = 48_000
+        max_deviation = 2_500.0
+
     channel_iq = extract_channel(
         iq, sample_rate, center_freq, channel_freq,
         channel_bw=channel_bw, output_rate=intermediate_rate,
@@ -208,4 +221,5 @@ def demod_channel(
     return fm_demodulate(
         channel_iq, intermediate_rate,
         audio_rate=audio_rate,
+        max_deviation=max_deviation,
     )
