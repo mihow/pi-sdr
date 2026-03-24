@@ -51,14 +51,25 @@ def main():
     scanner = Scanner(backend=backend, broadcaster=broadcaster, recorder=recorder)
     scanner.set_squelch(args.squelch)
 
-    # Open SDR backend
-    try:
-        backend.open()
-    except Exception as e:
-        log.error("Failed to open SDR backend: %s", e)
-        sys.exit(1)
+    # Open SDR backend with retry
+    import time
+    max_retries = 30
+    for attempt in range(max_retries):
+        try:
+            backend.open()
+            break
+        except Exception as e:
+            log.error("Failed to open SDR backend: %s", e)
+            if attempt < max_retries - 1:
+                wait = min(2 * (attempt + 1), 10)
+                log.info("Retrying in %ds (attempt %d/%d)...", wait, attempt + 1, max_retries)
+                time.sleep(wait)
+            else:
+                log.error("Giving up after %d attempts", max_retries)
+                # Start web dashboard anyway so user can see the error
+                break
 
-    if args.auto_start:
+    if args.auto_start and backend.is_open():
         scanner.start_scanning()
 
     # Graceful shutdown

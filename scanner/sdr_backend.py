@@ -101,7 +101,12 @@ class SoapySdrBackend:
             return
 
         logger.info("Opening SoapySDR device (driver=%s)", self._driver)
-        self._device = SoapySDR.Device({"driver": self._driver})
+        # Enumerate first, then open — some SoapySDR versions don't accept plain dicts
+        results = SoapySDR.Device.enumerate({"driver": self._driver})
+        if not results:
+            raise RuntimeError(f"No SoapySDR device found for driver={self._driver}")
+        logger.info("Found device: %s", dict(results[0]))
+        self._device = SoapySDR.Device(results[0])
 
         # Set sample rate
         self._device.setSampleRate(SOAPY_SDR_RX, 0, self._sample_rate)
