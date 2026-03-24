@@ -20,6 +20,48 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Recommended sample rates per driver.  Used when the caller doesn't
+# specify --sample-rate so each device gets a sensible bandwidth without
+# the user having to remember magic numbers.
+DEVICE_DEFAULTS: dict[str, dict] = {
+    "rtlsdr": {
+        "sample_rate": 2_400_000,
+        "description": "RTL-SDR Blog V4 (2.4 MHz BW)",
+    },
+    "sdrplay": {
+        "sample_rate": 6_000_000,
+        "description": "SDRplay RSP series (6 MHz BW, 14-bit)",
+    },
+    "airspy": {
+        "sample_rate": 6_000_000,
+        "description": "Airspy R2/Mini (6 MHz BW)",
+    },
+    "hackrf": {
+        "sample_rate": 8_000_000,
+        "description": "HackRF One (8 MHz BW)",
+    },
+    "miri": {
+        "sample_rate": 6_000_000,
+        "description": "Mirics/SDRplay via osmocom (6 MHz BW)",
+    },
+}
+
+DEFAULT_SAMPLE_RATE = 2_400_000  # fallback for unknown drivers
+
+
+def get_default_sample_rate(driver: str) -> int:
+    """Return the recommended sample rate for a given SoapySDR driver."""
+    if driver in DEVICE_DEFAULTS:
+        return DEVICE_DEFAULTS[driver]["sample_rate"]
+    logger.warning(
+        "Unknown driver '%s', using default sample rate %d Hz. "
+        "Known drivers: %s",
+        driver,
+        DEFAULT_SAMPLE_RATE,
+        ", ".join(DEVICE_DEFAULTS),
+    )
+    return DEFAULT_SAMPLE_RATE
+
 
 @runtime_checkable
 class SdrBackend(Protocol):
@@ -79,7 +121,7 @@ class SoapySdrBackend:
         self,
         driver: str = "rtlsdr",
         gain: float | None = None,
-        sample_rate: int = 2_400_000,
+        sample_rate: int | None = None,
     ) -> None:
         if SoapySDR is None:
             raise ImportError(
@@ -88,7 +130,15 @@ class SoapySdrBackend:
             )
         self._driver = driver
         self._gain = gain  # None = auto-gain
-        self._sample_rate = sample_rate
+        if sample_rate is None:
+            self._sample_rate = get_default_sample_rate(driver)
+            logger.info(
+                "Auto-selected sample rate %d Hz for driver '%s'",
+                self._sample_rate,
+                driver,
+            )
+        else:
+            self._sample_rate = sample_rate
         self._device: SoapySDR.Device | None = None
         self._stream = None
         self._center_freq: int = 0
@@ -194,10 +244,11 @@ class SoapySdrBackend:
     def get_max_bandwidth(self) -> int:
         """Return the maximum usable bandwidth in Hz.
 
-        For RTL-SDR, this is 2.4 MHz. The edges of the bandwidth
-        tend to roll off, so the usable bandwidth is the sample rate.
+        The edges of the capture bandwidth roll off, so usable bandwidth
+        is ~80% of sample rate. This prevents placing channels in the
+        attenuated edges where power measurements are unreliable.
         """
-        return self._sample_rate
+        return int(self._sample_rate * 0.8)
 
     def is_open(self) -> bool:
         """Return True if the device is open and streaming."""

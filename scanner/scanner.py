@@ -376,7 +376,10 @@ class Scanner:
         while not self._stop_event.is_set():
             # Read fresh IQ
             try:
-                iq = self.backend.read_iq(65536)  # ~27ms at 2.4 Msps
+                # Read enough samples for ~27ms of signal regardless of sample rate
+                sr = self.backend.get_sample_rate()
+                read_samples = max(65536, int(sr * 0.027))
+                iq = self.backend.read_iq(read_samples)
             except Exception as e:
                 log.error("IQ read failed during hold: %s", e)
                 break
@@ -385,6 +388,7 @@ class Scanner:
             audio = demod_channel(
                 iq, self.backend.get_sample_rate(),
                 window["center"], ch.freq, ch.bandwidth,
+                mod=ch.mod,
             )
             audio_bytes = audio.tobytes()
 
@@ -491,7 +495,9 @@ class Scanner:
 
         while not self._stop_event.is_set():
             try:
-                iq = self.backend.read_iq(65536)  # ~27ms chunks
+                sr = self.backend.get_sample_rate()
+                read_samples = max(65536, int(sr * 0.027))
+                iq = self.backend.read_iq(read_samples)
             except Exception as e:
                 log.error("IQ read failed: %s", e)
                 break

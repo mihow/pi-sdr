@@ -1,10 +1,28 @@
 services:
+  scanner:
+    build:
+      context: ./scanner
+    init: true
+    privileged: true
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - ./recordings:/app/recordings
+    ports:
+      - "8080:8080"
+    environment:
+      - SDR_DRIVER=${SDR_DRIVER:-sdrplay}
+    command: ["--driver", "${SDR_DRIVER:-sdrplay}", "--auto-start"]
+    restart: unless-stopped
+
+  # --- Pi image builder (not needed for scanner) ---
+
   # One-time: registers aarch64 binfmt handler on host kernel.
   # Persists until reboot. Safe to re-run.
   binfmt:
     image: multiarch/qemu-user-static
     command: ["--reset", "-p", "yes"]
     privileged: true
+    profiles: ["build"]
 
   build:
     build: .
@@ -12,6 +30,7 @@ services:
     depends_on:
       binfmt:
         condition: service_completed_successfully
+    profiles: ["build"]
     env_file:
       - path: .env
         required: false

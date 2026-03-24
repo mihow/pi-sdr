@@ -7,7 +7,7 @@ import logging
 import signal
 import sys
 
-from .sdr_backend import SoapySdrBackend
+from .sdr_backend import DEVICE_DEFAULTS, SoapySdrBackend
 from .audio_stream import AudioBroadcaster
 from .scanner import Scanner
 from .web import create_app
@@ -22,7 +22,11 @@ log = logging.getLogger("scanner")
 
 def main():
     parser = argparse.ArgumentParser(description="Radio Scanner")
-    parser.add_argument("--driver", default="rtlsdr", help="SoapySDR driver (default: rtlsdr)")
+    drivers_help = ", ".join(
+        f"{name} ({info['description']})" for name, info in DEVICE_DEFAULTS.items()
+    )
+    parser.add_argument("--driver", default="rtlsdr", help=f"SoapySDR driver (default: rtlsdr). Known: {drivers_help}")
+    parser.add_argument("--sample-rate", type=int, default=None, help="Sample rate in Hz (default: auto-detected from driver)")
     parser.add_argument("--gain", type=float, default=None, help="SDR gain in dB (default: auto)")
     parser.add_argument("--iq-file", default=None, help="IQ file for testing without hardware (uses FileSdrBackend)")
     parser.add_argument("--web-port", type=int, default=8080, help="Web dashboard port (default: 8080)")
@@ -37,7 +41,11 @@ def main():
         from .sdr_backend import FileSdrBackend
         backend = FileSdrBackend(args.iq_file, sample_rate=2_400_000, center_freq=0)
     else:
-        backend = SoapySdrBackend(driver=args.driver, gain=args.gain)
+        backend = SoapySdrBackend(
+            driver=args.driver,
+            gain=args.gain,
+            sample_rate=args.sample_rate,
+        )
 
     # Create audio broadcaster
     broadcaster = AudioBroadcaster()

@@ -60,6 +60,40 @@ def _get_deemph_coeffs(sample_rate: int, tau: float = 75e-6) -> tuple[float, flo
     return _deemph_cache[sample_rate]
 
 
+def _coarse_decimate(iq: np.ndarray, factor: int) -> np.ndarray:
+    """Decimate complex IQ by an integer factor with anti-alias filter.
+
+    Uses scipy.signal.decimate on real and imaginary parts separately.
+    For factors > 13, decomposes into multiple stages (scipy recommendation).
+    """
+    if factor <= 1:
+        return iq
+
+    # Decompose into stages with factor <= 13 each
+    stages: list[int] = []
+    remaining = factor
+    while remaining > 1:
+        # Find the largest divisor <= 13
+        stage = min(remaining, 13)
+        while remaining % stage != 0 and stage > 1:
+            stage -= 1
+        if stage <= 1:
+            # remaining is prime > 13, just use it directly
+            stages.append(remaining)
+            remaining = 1
+        else:
+            stages.append(stage)
+            remaining //= stage
+
+    current = iq
+    for stage in stages:
+        re = decimate(current.real.astype(np.float64), stage).astype(np.float32)
+        im = decimate(current.imag.astype(np.float64), stage).astype(np.float32)
+        current = (re + 1j * im).astype(np.complex64)
+
+    return current
+
+
 def extract_channel(
     iq: np.ndarray,
     sample_rate: int,
@@ -73,9 +107,13 @@ def extract_channel(
     Frequency-shifts the target channel to baseband, applies a FIR lowpass
     filter, and decimates to output_rate.
 
+    For high sample rates (e.g. 8 MHz SDRplay), uses multi-stage decimation:
+    first a coarse decimation to bring the rate within range of the FIR filter,
+    then fine decimation to the output rate.
+
     Args:
         iq: complex64 wideband IQ samples.
-        sample_rate: Input sample rate (e.g. 2_400_000).
+        sample_rate: Input sample rate (e.g. 2_400_000 or 8_000_000).
         center_freq: Center frequency of the IQ capture.
         channel_freq: Target channel frequency to extract.
         channel_bw: Channel bandwidth in Hz (default 12500 for NFM).
@@ -91,30 +129,51 @@ def extract_channel(
     t = np.arange(n_samples, dtype=np.float32) / sample_rate
     shifted = iq * np.exp(-1j * 2.0 * np.pi * offset * t).astype(np.complex64)
 
-    # 2. FIR lowpass filter
-    fir = _get_fir_coeffs(sample_rate, channel_bw, output_rate)
-    filtered = lfilter(fir, 1.0, shifted).astype(np.complex64)
+    # 2. Multi-stage decimation for high sample rates.
+    # Target an intermediate rate ~4x the channel bandwidth (but >= output_rate)
+    # so the FIR filter has a reasonable cutoff with 101 taps.
+    current_rate = sample_rate
+    current_iq = shifted
 
-    # 3. Decimate to output_rate
-    dec_factor = sample_rate // output_rate
+    target_coarse_rate = max(output_rate, channel_bw * 8)
+    coarse_factor = current_rate // target_coarse_rate
+    if coarse_factor > 1:
+        # Ensure factor divides evenly, otherwise round down to nearest factor
+        # that keeps rate above output_rate
+        while current_rate % coarse_factor != 0 and coarse_factor > 1:
+            coarse_factor -= 1
+        if coarse_factor > 1:
+            current_iq = _coarse_decimate(current_iq, coarse_factor)
+            current_rate = current_rate // coarse_factor
+            logger.debug(
+                "Coarse decimation: %d -> %d Hz (factor %d)",
+                sample_rate, current_rate, coarse_factor,
+            )
+
+    # 3. FIR lowpass filter at the reduced rate
+    fir = _get_fir_coeffs(current_rate, channel_bw, output_rate)
+    filtered = lfilter(fir, 1.0, current_iq).astype(np.complex64)
+
+    # 4. Decimate to output_rate
+    dec_factor = current_rate // output_rate
     if dec_factor < 1:
         dec_factor = 1
 
-    if sample_rate % output_rate == 0 and dec_factor > 1:
+    if current_rate % output_rate == 0 and dec_factor > 1:
         # Integer decimation: just take every Nth sample (already filtered)
         channel = filtered[::dec_factor]
     elif dec_factor > 1:
         # Non-integer: use rational resampling
-        g = gcd(sample_rate, output_rate)
+        g = gcd(current_rate, output_rate)
         up = output_rate // g
-        down = sample_rate // g
+        down = current_rate // g
         channel = resample_poly(filtered, up, down).astype(np.complex64)
     else:
         channel = filtered
 
     logger.debug(
-        "extract_channel: %d Hz offset, %d -> %d Hz, %d -> %d samples",
-        offset, sample_rate, output_rate, n_samples, len(channel),
+        "extract_channel: %d Hz offset, %d -> %d -> %d Hz, %d -> %d samples",
+        offset, sample_rate, current_rate, output_rate, n_samples, len(channel),
     )
     return channel
 
