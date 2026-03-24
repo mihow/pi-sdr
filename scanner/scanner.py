@@ -49,7 +49,7 @@ class ScannerState:
     channels: dict[int, ChannelState] = field(default_factory=dict)
     scan_speed: float = 0.5  # seconds per channel when no signal
     voice_hold_time: float = 5.0  # seconds to stay on voice after it stops
-    squelch_level: float = -60.0  # dB, signals above this are "active"
+    squelch_level: float = -45.0  # dB, signals above this are "active"
 
 
 class Scanner:
@@ -441,9 +441,11 @@ class Scanner:
         log.debug("  %s: dwell complete, final=%s conf=%.2f", ch.name, detection.value, confidence)
         return False
 
-    def _hold_on_voice(self, ch: ChannelState):
+    def _hold_on_voice(self, ch: ChannelState, max_hold: float = 60.0):
         """Stay on frequency while voice is active, leave after hold_time of silence."""
         last_voice_time = time.monotonic()
+        last_signal_time = time.monotonic()
+        hold_start = time.monotonic()
 
         while not self._stop_event.is_set():
             time.sleep(0.2)
@@ -454,13 +456,23 @@ class Scanner:
             if detection == Detection.VOICE:
                 last_voice_time = time.monotonic()
 
-            # Check S-meter too
-            if self.state.current_smeter < self.state.squelch_level - 10:
-                # Signal completely gone
+            # Track signal presence via S-meter
+            if self.state.current_smeter > self.state.squelch_level:
+                last_signal_time = time.monotonic()
+
+            # Release if signal has been gone for 2 seconds
+            if time.monotonic() - last_signal_time > 2.0:
+                log.info("Signal lost on %s, resuming scan", ch.name)
                 break
 
+            # Release if voice stopped for hold_time
             if time.monotonic() - last_voice_time > self.state.voice_hold_time:
                 log.info("Voice ended on %s, resuming scan", ch.name)
+                break
+
+            # Max hold time — prevent locking on carriers/repeaters forever
+            if time.monotonic() - hold_start > max_hold:
+                log.info("Max hold time on %s, resuming scan", ch.name)
                 break
 
     def toggle_skip(self, freq: int) -> bool:

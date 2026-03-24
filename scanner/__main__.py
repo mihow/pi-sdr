@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--web-port", type=int, default=8080, help="Web dashboard port (default: 8080)")
     parser.add_argument("--ssl", action="store_true", default=True, help="Use SSL/WSS (default: true)")
     parser.add_argument("--no-ssl", action="store_true", help="Disable SSL")
-    parser.add_argument("--squelch", type=float, default=-60, help="Squelch level in dB (default: -60)")
+    parser.add_argument("--squelch", type=float, default=-45, help="Squelch level in dB (default: -45)")
     parser.add_argument("--auto-start", action="store_true", help="Start scanning immediately")
     args = parser.parse_args()
 

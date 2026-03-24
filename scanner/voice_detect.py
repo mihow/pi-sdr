@@ -107,31 +107,34 @@ class VoiceDetector:
                 rms, sf, zcr, self._has_pitch(samples) if rms > 0.003 else "skip"
             )
 
-        # Primary detection: WebRTC VAD if available (works well for speech)
+        # Combined detection: webrtcvad + spectral features
+        # webrtcvad alone is too permissive on FM-demodulated audio (classifies
+        # carrier noise as speech). Require BOTH webrtcvad AND spectral evidence.
         if rms < 0.003:
             det = Detection.NOISE
-        elif self.vad is not None:
-            try:
-                is_speech = self.vad.is_speech(frame_bytes, self.sample_rate)
-                if is_speech:
-                    # Check if it's digital (high spectral flatness = digital mode)
-                    if sf > self.flatness_digital:
-                        det = Detection.DIGITAL
-                    else:
-                        det = Detection.VOICE
-                else:
-                    det = Detection.NOISE
-            except Exception:
-                # webrtcvad only supports 8/16/32/48 kHz and 10/20/30ms frames
-                det = Detection.VOICE if self._has_pitch(samples) else Detection.NOISE
         else:
-            # No webrtcvad: use spectral analysis only
-            if sf > self.flatness_noise and zcr > self.zcr_noise:
+            has_pitch = self._has_pitch(samples) if rms > 0.01 else False
+            vad_speech = False
+
+            if self.vad is not None:
+                try:
+                    vad_speech = self.vad.is_speech(frame_bytes, self.sample_rate)
+                except Exception:
+                    pass
+
+            # High spectral flatness = noise or digital
+            if sf > self.flatness_noise:
                 det = Detection.NOISE
-            elif sf > self.flatness_digital and not self._has_pitch(samples):
+            elif sf > self.flatness_digital and not has_pitch:
                 det = Detection.DIGITAL
+            elif vad_speech and (has_pitch or sf < 0.35):
+                # webrtcvad says speech AND spectral evidence supports it
+                det = Detection.VOICE
+            elif has_pitch and sf < 0.4:
+                # Clear pitch + low flatness = voice even without webrtcvad
+                det = Detection.VOICE
             else:
-                det = Detection.VOICE if self._has_pitch(samples) else Detection.NOISE
+                det = Detection.NOISE
 
         self.window.append(det)
         return det
