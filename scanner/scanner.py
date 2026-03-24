@@ -590,6 +590,7 @@ class Scanner:
             "current_window_lo_mhz": f"{(self.state.current_window_center - self.state.current_window_bw // 2) / 1e6:.3f}" if self.state.current_window_center else "",
             "current_window_hi_mhz": f"{(self.state.current_window_center + self.state.current_window_bw // 2) / 1e6:.3f}" if self.state.current_window_center else "",
             "fft_data": self.state.fft_data,
+            "sdr_info": self.backend.get_device_info() if self.backend else {},
         }
 
     def shutdown(self):

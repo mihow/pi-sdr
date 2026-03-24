@@ -276,6 +276,19 @@ body {
 .act-voice { color: #0f0; }
 .act-signal { color: #cc0; }
 .sdr-source { font-family: monospace; font-size: 11px; color: #666; margin-left: 8px; }
+.info-btn {
+  background: none;
+  border: 1px solid #444;
+  border-radius: 50%;
+  color: #888;
+  font-size: 12px;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 18px;
+}
+.info-btn:hover { color: #fff; border-color: #888; }
 .band-overview {
   padding: 8px 16px;
   background: #151515;
@@ -312,7 +325,7 @@ body {
 </head>
 <body>
 <div class="header">
-  <h1><span class="sdr-dot" id="sdr-dot"></span>Radio Scanner<span id="sdr-source" class="sdr-source"></span></h1>
+  <h1><span class="sdr-dot" id="sdr-dot"></span>Radio Scanner<span id="sdr-source" class="sdr-source"></span><span id="conn-status" style="font-size:11px;margin-left:8px"></span><button class="info-btn" onclick="showSdrInfo()" title="SDR Info">&#8505;</button></h1>
   <div class="status-bar">
     <span class="freq" id="current-freq">---</span>
     <span id="current-name"></span>
@@ -382,6 +395,8 @@ let state = {};
 let activeGroup = "all";
 let sortMode = "freq";
 let pollInterval;
+let lastPollOk = false;
+let pollFailCount = 0;
 
 let audioCtx = null;
 let audioWs = null;
@@ -824,16 +839,39 @@ function renderFFT() {
 async function poll() {
   try {
     state = await api('/state');
+    lastPollOk = true;
+    pollFailCount = 0;
     updateHeader();
+    renderChannels();
     renderBands();
     renderFFT();
-    renderChannels();
     renderActivity();
-    // Only render groups on first load
     if (!document.querySelector('.group-filter button')) renderGroups();
   } catch(e) {
+    lastPollOk = false;
+    pollFailCount++;
     console.error('Poll error:', e);
   }
+  updateConnectionStatus();
+}
+
+function updateConnectionStatus() {
+  const el = document.getElementById('conn-status');
+  if (!el) return;
+  if (lastPollOk) {
+    el.textContent = 'Connected';
+    el.style.color = '#0a0';
+  } else {
+    el.textContent = 'Disconnected (' + pollFailCount + ')';
+    el.style.color = '#a00';
+  }
+}
+
+function showSdrInfo() {
+  if (!state.sdr_info) return;
+  const info = state.sdr_info;
+  const lines = Object.entries(info).map(([k,v]) => k + ': ' + v).join('\\n');
+  alert('SDR Device Info\\n\\n' + lines);
 }
 
 // Poll every 500ms

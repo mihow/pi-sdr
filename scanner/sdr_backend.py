@@ -64,6 +64,10 @@ class SdrBackend(Protocol):
         """Return a human-readable name for the SDR source."""
         ...
 
+    def get_device_info(self) -> dict:
+        """Return hardware info about the connected SDR."""
+        ...
+
 
 class SoapySdrBackend:
     """SoapySDR-based SDR backend.
@@ -197,6 +201,33 @@ class SoapySdrBackend:
     def get_source_name(self) -> str:
         return f"SDR ({self._driver})"
 
+    def get_device_info(self) -> dict:
+        """Return hardware info about the connected SDR."""
+        if not self._device:
+            return {"driver": self._driver, "status": "disconnected"}
+        info = {"driver": self._driver, "status": "connected"}
+        try:
+            hw_info = self._device.getHardwareInfo()
+            info.update({k: str(v) for k, v in hw_info.items()})
+        except Exception:
+            pass
+        try:
+            info["hardware_key"] = self._device.getHardwareKey()
+        except Exception:
+            pass
+        try:
+            # Get gain range
+            gain_range = self._device.getGainRange(SoapySDR.SOAPY_SDR_RX, 0)
+            info["gain_range"] = f"{gain_range.minimum()}-{gain_range.maximum()} dB"
+            info["current_gain"] = f"{self._device.getGain(SoapySDR.SOAPY_SDR_RX, 0):.1f} dB"
+        except Exception:
+            pass
+        try:
+            info["sample_rate"] = f"{self._sample_rate / 1e6:.1f} MHz"
+        except Exception:
+            pass
+        return info
+
 
 class FileSdrBackend:
     """SdrBackend that reads from pre-recorded .cf32 IQ files.
@@ -327,3 +358,13 @@ class FileSdrBackend:
 
     def get_source_name(self) -> str:
         return f"IQ File: {self._file_path.name}"
+
+    def get_device_info(self) -> dict:
+        return {
+            "driver": "file",
+            "status": "connected" if self._is_open else "disconnected",
+            "file": str(self._file_path.name),
+            "sample_rate": f"{self._sample_rate / 1e6:.1f} MHz",
+            "center_freq": f"{self._center_freq / 1e6:.3f} MHz",
+            "duration": f"{len(self._iq_data) / self._sample_rate:.1f}s" if self._iq_data is not None else "N/A",
+        }
