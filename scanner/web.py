@@ -405,6 +405,7 @@ let audioPlaying = false;
 let audioMuted = false;
 let audioVolume = 0.7;
 let audioNode = null;
+let audioBuffer = new Float32Array(0);  // continuous ring buffer
 
 function toggleAudio() {
   if (audioPlaying) {
@@ -419,17 +420,22 @@ function startAudio() {
   const gainNode = audioCtx.createGain();
   gainNode.gain.value = audioVolume;
   gainNode.connect(audioCtx.destination);
+  audioBuffer = new Float32Array(0);
 
-  // ScriptProcessorNode for PCM playback
-  audioNode = audioCtx.createScriptProcessor(2048, 0, 1);
+  // ScriptProcessorNode for PCM playback with continuous buffer
+  audioNode = audioCtx.createScriptProcessor(1024, 0, 1);
   audioNode.onaudioprocess = (e) => {
     const output = e.outputBuffer.getChannelData(0);
-    if (audioQueue.length > 0 && !audioMuted) {
-      const chunk = audioQueue.shift();
-      const samples = new Int16Array(chunk);
-      for (let i = 0; i < output.length; i++) {
-        output[i] = i < samples.length ? samples[i] / 32768.0 : 0;
-      }
+    if (audioBuffer.length >= output.length && !audioMuted) {
+      // Copy from buffer to output
+      output.set(audioBuffer.subarray(0, output.length));
+      // Remove consumed samples
+      audioBuffer = audioBuffer.subarray(output.length);
+    } else if (audioBuffer.length > 0 && !audioMuted) {
+      // Partial buffer — play what we have, silence the rest
+      output.set(audioBuffer);
+      for (let i = audioBuffer.length; i < output.length; i++) output[i] = 0;
+      audioBuffer = new Float32Array(0);
     } else {
       output.fill(0);
     }
@@ -441,9 +447,24 @@ function startAudio() {
   audioWs = new WebSocket(proto + '//' + location.host + '/ws/audio');
   audioWs.binaryType = 'arraybuffer';
   audioWs.onmessage = (e) => {
-    if (audioQueue.length < 20) {  // ~1.2s buffer max
-      audioQueue.push(e.data);
+    // Skip the 6-byte format header on first message
+    const data = e.data;
+    if (data.byteLength <= 6) return;
+    // Convert int16 PCM to float32 and append to continuous buffer
+    const samples = new Int16Array(data);
+    const floats = new Float32Array(samples.length);
+    for (let i = 0; i < samples.length; i++) floats[i] = samples[i] / 32768.0;
+    // Append to buffer (cap at 2s = 32000 samples to prevent runaway)
+    const maxBuf = 32000;
+    if (audioBuffer.length + floats.length > maxBuf) {
+      // Drop old samples to stay within limit
+      const keep = maxBuf - floats.length;
+      audioBuffer = audioBuffer.subarray(Math.max(0, audioBuffer.length - keep));
     }
+    const newBuf = new Float32Array(audioBuffer.length + floats.length);
+    newBuf.set(audioBuffer);
+    newBuf.set(floats, audioBuffer.length);
+    audioBuffer = newBuf;
   };
   audioWs.onclose = () => { audioPlaying = false; updateAudioBtn(); };
 
@@ -455,7 +476,7 @@ function stopAudio() {
   if (audioWs) { audioWs.close(); audioWs = null; }
   if (audioNode) { audioNode.disconnect(); audioNode = null; }
   if (audioCtx) { audioCtx.close(); audioCtx = null; }
-  audioQueue = [];
+  audioBuffer = new Float32Array(0);
   audioPlaying = false;
   updateAudioBtn();
 }
