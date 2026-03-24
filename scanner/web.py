@@ -309,6 +309,8 @@ body {
 .band-card .band-range { color: #888; font-family: monospace; font-size: 11px; }
 .band-card .band-signals { color: #0a0; font-size: 11px; }
 .ch-name { cursor: pointer; }
+.mod-btn, .bw-btn { cursor: pointer; color: #8af; }
+.mod-btn:hover, .bw-btn:hover { text-decoration: underline; color: #fff; }
 .ch-name:hover { text-decoration: underline; color: #fff; }
 #scan-window { font-family: monospace; color: #888; }
 .fft-section {
@@ -585,7 +587,7 @@ function renderChannels() {
     const color = smeterColor(ch.smeter);
     return `<div class="${cls.join(' ')}">
       <div class="freq-col" onclick="tuneToChannel(${ch.freq})" style="cursor:pointer" title="Click to listen">${ch.freq_mhz}</div>
-      <div class="name-col"><span class="ch-name" onclick="renameChannel(${ch.freq},'${ch.name.replace(/'/g,"\\'")}')">${ch.name}</span><br><span class="group">${ch.group} · ${ch.mod.toUpperCase()}</span></div>
+      <div class="name-col"><span class="ch-name" onclick="renameChannel(${ch.freq},'${ch.name.replace(/'/g,"\\'")}')">${ch.name}</span><br><span class="group">${ch.group} · <span class="mod-btn" onclick="cycleMod(${ch.freq},'${ch.mod}')">${ch.mod.toUpperCase()}</span> · <span class="bw-btn" onclick="adjustBw(${ch.freq},${ch.bandwidth})">${ch.bandwidth>=1000?(ch.bandwidth/1000)+'k':ch.bandwidth}</span></span></div>
       <div class="smeter-bar"><div class="fill" style="width:${fill}%;background:${color}"></div></div>
       <div class="stats-col">
         ${ch.signal_count > 0 ? ch.signal_count + ' sig' : ''}
@@ -707,6 +709,31 @@ async function renameChannel(freq, currentName) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({freq, name})});
     poll();
+  }
+}
+
+const MOD_CYCLE = ['nfm', 'wfm', 'am', 'usb', 'lsb'];
+async function cycleMod(freq, currentMod) {
+  const idx = MOD_CYCLE.indexOf(currentMod);
+  const next = MOD_CYCLE[(idx + 1) % MOD_CYCLE.length];
+  await api('/channel/params', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({freq, mod: next})});
+  poll();
+}
+
+async function adjustBw(freq, currentBw) {
+  const input = prompt('Bandwidth (Hz):', currentBw);
+  if (input) {
+    let bw = parseInt(input);
+    // Allow shorthand like "25k" or "200k"
+    if (input.toLowerCase().endsWith('k')) bw = parseFloat(input) * 1000;
+    if (bw >= 1000 && bw <= 250000) {
+      await api('/channel/params', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({freq, bandwidth: bw})});
+      poll();
+    }
   }
 }
 
@@ -989,6 +1016,17 @@ def add_channel():
 def rename_channel():
     data = request.get_json()
     ok = scanner.rename_channel(data["freq"], data["name"])
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/channel/params", methods=["POST"])
+def set_channel_params():
+    data = request.get_json()
+    ok = scanner.set_channel_params(
+        data["freq"],
+        mod=data.get("mod"),
+        bandwidth=data.get("bandwidth"),
+    )
     return jsonify({"ok": ok})
 
 

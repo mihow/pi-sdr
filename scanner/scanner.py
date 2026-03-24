@@ -120,6 +120,18 @@ class Scanner:
             return True
         return False
 
+    def set_channel_params(self, freq: int, mod: str | None = None,
+                           bandwidth: int | None = None) -> bool:
+        """Update modulation type and/or bandwidth for a channel."""
+        if freq not in self.state.channels:
+            return False
+        ch = self.state.channels[freq]
+        if mod is not None and mod in ("nfm", "wfm", "am", "usb", "lsb"):
+            ch.mod = mod
+        if bandwidth is not None and 1000 <= bandwidth <= 250_000:
+            ch.bandwidth = bandwidth
+        return True
+
     def _get_scan_list(self) -> list[ChannelState]:
         """Get list of non-skipped channels."""
         return [ch for ch in self.state.channels.values() if not ch.skip]
@@ -549,6 +561,7 @@ class Scanner:
                 "freq_mhz": f"{ch.freq / 1e6:.4f}",
                 "name": ch.name,
                 "mod": ch.mod,
+                "bandwidth": ch.bandwidth,
                 "group": ch.group,
                 "skip": ch.skip,
                 "last_signal": ch.last_signal.isoformat() if ch.last_signal else None,

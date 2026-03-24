@@ -177,6 +177,71 @@ def fm_demodulate(
     return (audio * 32767).astype(np.int16)
 
 
+def ssb_demodulate(
+    channel_iq: np.ndarray,
+    sample_rate: int,
+    audio_rate: int = 16_000,
+    sideband: str = "usb",
+) -> np.ndarray:
+    """Demodulate SSB (USB/LSB) audio from channel IQ data.
+
+    USB: upper sideband (keep frequencies above carrier).
+    LSB: lower sideband (keep frequencies below carrier).
+
+    Args:
+        channel_iq: complex64 channel IQ at intermediate rate.
+        sample_rate: Sample rate of channel_iq.
+        audio_rate: Output audio sample rate.
+        sideband: "usb" or "lsb".
+
+    Returns:
+        int16 PCM audio at audio_rate.
+    """
+    if len(channel_iq) < 2:
+        return np.array([], dtype=np.int16)
+
+    # Sideband filter: bandpass one side of the spectrum
+    if sideband == "lsb":
+        low_cut = -3000.0
+        high_cut = -100.0
+    else:  # usb
+        low_cut = 100.0
+        high_cut = 3000.0
+
+    # Design bandpass FIR
+    nyq = sample_rate / 2.0
+    taps = firwin(
+        101,
+        [max(abs(low_cut), 10) / nyq, min(abs(high_cut), nyq - 10) / nyq],
+        pass_zero=False,
+    )
+
+    # Apply filter and take real part (product detector)
+    if sideband == "lsb":
+        # Conjugate to mirror spectrum for LSB
+        filtered = lfilter(taps, 1.0, np.conj(channel_iq))
+    else:
+        filtered = lfilter(taps, 1.0, channel_iq)
+
+    audio = np.real(filtered).astype(np.float32)
+
+    # Resample to audio_rate
+    if sample_rate != audio_rate:
+        g = gcd(sample_rate, audio_rate)
+        up = audio_rate // g
+        down = sample_rate // g
+        audio = resample_poly(audio, up, down).astype(np.float32)
+
+    # AGC with higher max gain for weak SSB signals
+    rms = float(np.sqrt(np.mean(audio ** 2)))
+    if rms > 0:
+        gain = min(0.5 / rms, 10.0)
+        audio = audio * gain
+
+    audio = np.clip(audio, -1.0, 1.0)
+    return (audio * 32767).astype(np.int16)
+
+
 def am_demodulate(
     channel_iq: np.ndarray,
     sample_rate: int,
@@ -254,6 +319,16 @@ def demod_channel(
             channel_bw=channel_bw, output_rate=intermediate_rate,
         )
         return am_demodulate(channel_iq, intermediate_rate, audio_rate=audio_rate)
+
+    elif mod in ("usb", "lsb"):
+        # SSB: sideband filter + product detector
+        intermediate_rate = 48_000
+        channel_iq = extract_channel(
+            iq, sample_rate, center_freq, channel_freq,
+            channel_bw=max(channel_bw, 4000), output_rate=intermediate_rate,
+        )
+        return ssb_demodulate(channel_iq, intermediate_rate,
+                              audio_rate=audio_rate, sideband=mod)
 
     elif mod == "wfm" or channel_bw >= 100_000:
         # Wideband FM (broadcast): 75 kHz deviation, higher intermediate rate
