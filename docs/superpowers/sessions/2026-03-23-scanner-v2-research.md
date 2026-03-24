@@ -1,95 +1,85 @@
-# Scanner V2 Research Session — 2026-03-23
+# Scanner V2 Session Log — 2026-03-23/24
 
-## Goal
+## What was accomplished
 
-Validate the scanner v2 design spec against OpenWebRX+ internals. Answer the open questions from the spec by reading the actual source code.
+### Design (approved)
+- Signal-driven scanner as OpenWebRX+ fork extension with mobile UI
+- Design spec: `docs/superpowers/specs/2026-03-23-scanner-v2-design.md`
+- Research doc: `docs/superpowers/research/2026-03-23-openwebrx-internals.md`
+- Implementation plan: `docs/superpowers/plans/2026-03-23-scanner-v2-implementation.md`
 
-## Open Questions to Answer
+### Implementation (66 tests, 18 commits on `feat/scanner-v2`)
+All code in OpenWebRX+ fork: `/home/michael/Projects/Radio/OpenWebRX/openwebrx+`
 
-1. **Server-side extension:** Does OpenWebRX+ have a plugin API? Can we add a scanner plugin without forking?
-2. **SDR retune API:** Can we retune center frequency programmatically from Python?
-3. **FFT data access:** How do we read FFT power spectrum server-side?
-4. **Audio tee for recording:** Can we tap the demod audio for recording?
-5. **Mobile audio:** WebSocket audio streaming architecture.
+**Core modules:**
+- `owrx/scanner/db.py` — SQLite: detections, bookmarks, sessions (8 tests)
+- `owrx/scanner/detector.py` — FFT peak finding, noise floor, averaging, merging (11 tests)
+- `owrx/scanner/sweep.py` — frequency windows, skip lists, band→mode mapping (9 tests)
+- `owrx/scanner/classifier.py` — pluggable pipeline, freq-band authoritative for mode (10 tests)
+- `owrx/scanner/known_freqs.py` — Portland freq database: NOAA, FM, air, marine, ham, GMRS (20 tests)
+- `owrx/scanner/__init__.py` — ScannerService with background loop, state, callbacks (5 tests)
+- `owrx/scanner/config.py` — config keys registered in OWRX+ property system
+- `owrx/controllers/scanner.py` — 5 REST API endpoints wired to OWRX+ router
 
-## Resources
+**CLI tools:**
+- `scripts/scan_iq.py` — full pipeline: detect → classify → log → demod → WAV
+- `scripts/analyze_scan.py` — audit results: mode mismatches, audio quality, duplicates
+- `scripts/record_bands.sh` — record IQ from SDRplay across all voice bands
 
-- OpenWebRX+ fork: `/home/michael/Projects/Radio/OpenWebRX/openwebrx+`
-- Fork PRs: https://github.com/mihow/openwebrxplus/pulls
-- Key PRs to study:
-  - PR #6: IQ FileSource for automated testing
-  - PR #5: Signal Classification Plugin
-  - PR #7: SDR integration tests
-  - PR #3: LoRa demodulator
-  - PR #10: PyTorch signal classification
-- Full research doc: `docs/superpowers/research/2026-03-23-openwebrx-internals.md`
+**Validated with real hardware:**
+- SDRplay RSP1a recordings across FM, NOAA, airband, 2m, 70cm, GMRS, marine, HF
+- Clear voice audio demodulated from 443.150 MHz repeater (Mount Scott?)
+- NOAA WX7 (162.550) confirmed clear in both OpenWebRX+ and our demod
+- Known freq labels matching detections (NOAA WX4, KYCH, etc.)
 
-## Findings
+### PRs
+- pi-sdr design/research: https://github.com/mihow/pi-sdr/pull/3
+- OpenWebRX+ implementation: https://github.com/mihow/openwebrxplus/pull/11
+- GitHub issues #4-#10 on mihow/pi-sdr
 
-### 1. Server-side extension points
-**No formal plugin API**, but well-defined extension points:
-- Routes: `owrx/http.py:92` — add `StaticRoute` or `RegexRoute` to `Router.__init__()`
-- Controllers: subclass `Controller`, implement `indexAction()`
-- Background services: implement `SdrSourceEventClient`, follow `ServiceHandler` pattern (`owrx/service/__init__.py:20`)
-- The `ServiceScheduler` pattern shows how to auto-switch profiles and run background logic
+### Known issues fixed this session
+- Mode classifier was wrong 100% — bandwidth overriding frequency band lookup (fixed)
+- DC offset in demod audio (fixed)
+- Stale files in CLI output (fixed)
+- Odd sample rates from decimation (fixed)
+- Signal detector too sensitive with real data — added FFT averaging + merging (fixed)
 
-**Verdict:** Must modify the codebase (fork), but the patterns are clean. No plugin system to work around.
+### Known issues remaining
+- Duplicate detections in DB when scanning same file twice (no dedup)
+- `scan_iq.py` CLI args override JSON sidecar for ALL files (should be per-file)
+- 16129 Hz sample rate still appears in some edge cases
+- No duration tracking for detections from IQ files (only meaningful for live scanning)
+- Portland repeater research agent results not yet integrated into known_freqs.py
 
-### 2. SDR retune API
-**YES — trivial.** `sdrSource.setCenterFreq(freq)` at `owrx/source/__init__.py:283`. Property system propagates to hardware. For ConnectorSource (RTL-SDR), sends TCP command. For DirectSource, restarts process. Profile switching via `activateProfile(id)`.
+## What's next (priority order)
 
-**Verdict:** Scanner can retune the SDR programmatically without any UI involvement.
+1. **Integrate Portland repeater frequencies** into `known_freqs.py` (agent results pending)
+2. **Wire scanner to live SDR** — connect ScannerService to OpenWebRX+'s SdrSource via FftChain + setCenterFreq. This is the task that makes real-time scanning work.
+3. **Mobile scanner UI** — HTML/JS at `/scanner` with activity feed + listening view
+4. **Audio recording service** — Opus encoding, storage management, pruning
+5. **WebSocket scanner messages** — real-time state + audio streaming to mobile UI
 
-### 3. FFT data access
-**YES — two approaches:**
-- Register as spectrum client: `sdrSource.addSpectrumClient(obj)` — gets ADPCM-compressed frames
-- Create own `FftChain` from `sdrSource.getBuffer().getReader()` — gets raw uncompressed data
-- FFT uses csdr C library (FFTW under the hood) via pycsdr bindings
+## Key files for next session
 
-**Verdict:** Creating our own FftChain is cleaner for the scanner — we want raw power data, not ADPCM-compressed display data.
+**OpenWebRX+ fork** (`/home/michael/Projects/Radio/OpenWebRX/openwebrx+`):
+- Branch: `feat/scanner-v2` (18 commits ahead of master)
+- Scanner modules: `owrx/scanner/` (7 files)
+- CLI tools: `scripts/scan_iq.py`, `scripts/analyze_scan.py`, `scripts/record_bands.sh`
+- Tests: `test/scanner/` (66 tests)
+- IQ recordings: `test_data/iq/` (~3 GB, gitignored, JSON sidecars committed)
+- Audio output: `test_data/output/` (gitignored)
+- REST API routes added to: `owrx/http.py`
+- Config defaults added to: `owrx/config/defaults.py`
 
-### 4. Audio recording tap
-**ALREADY EXISTS — twice:**
-- **Client-side:** `AudioEngine.js:337-408` — MP3 recording via lamejs in browser
-- **Server-side:** `AudioRecorder` at `csdr/chain/toolbox.py:260` — `ServiceDemodulator` with `Mp3Recorder` and **SNR-based squelch** (`SnrSquelch`). Configured via `rec_squelch`, `rec_hang_time`, `rec_produce_silence`.
+**pi-sdr** (`/home/michael/Projects/Radio/pi-sdr`):
+- Branch: `worktree-scanner-2`
+- Design spec: `docs/superpowers/specs/2026-03-23-scanner-v2-design.md`
+- Research: `docs/superpowers/research/2026-03-23-openwebrx-internals.md`
+- Plan: `docs/superpowers/plans/2026-03-23-scanner-v2-implementation.md`
 
-**Verdict:** The server-side `AudioRecorder` is almost exactly what scanner v2 needs. We can either reuse it directly or model our recording chain after it. The `SnrSquelch` is particularly relevant.
-
-### 5. WebSocket audio architecture
-- Binary protocol with type tags: `0x01` FFT, `0x02` audio, `0x03` secondary FFT, `0x04` HD audio
-- ADPCM compression default, 12 kHz standard / 48 kHz HD
-- Per-client DSP chains reading from shared IQ buffer
-- AudioWorklet with ring buffer for playback
-- **Mobile gap:** Only `resume()` from user gesture, no handling for background tabs or screen lock
-
-**Verdict:** The WebSocket protocol is simple and well-defined. Mobile audio will need extra work (keep-alive, background handling). The scanner's mobile UI can use the same protocol.
-
-### 6. Existing PRs — relevant patterns
-- **Signal classifier (PR #5):** `ThreadModule` tapping `selectorBuffer` — reuse for FFT channelizer
-- **LoRa (PR #3):** 6-file pattern for new decoders (modes.py, feature.py, module, chain, parser, dsp.py)
-- **IQ FileSource (PR #6):** Hardware-free testing with `.cf32` files and `pv` rate limiting
-- **PyTorch classifier (PR #10):** Simple 3-feature pre-classifier (envelope, inst-freq, spectral peak)
-- **Upstream `skip_scan` branch:** Adds "scannable" field to bookmarks
-- **Upstream `smart_squelch` branch:** SNR-based squelch for recording
-
-## Decisions
-
-1. **Fork approach confirmed.** No plugin API, but extension points are clean. We modify the fork directly.
-2. **Scanner service pattern:** Follow `ServiceHandler` model — implement `SdrSourceEventClient`, create own `FftChain`, retune via `setCenterFreq()`.
-3. **Recording:** Reuse/extend the existing `AudioRecorder` service chain, not build from scratch.
-4. **Classification:** Start with simple heuristics (power, bandwidth, modulation type), use PR #5's `ThreadModule` pattern. ML classification (PR #10 approach) is a future stage.
-5. **Mobile UI:** New static HTML/JS at `/scanner`, connect via same WebSocket protocol. Must handle mobile audio quirks (gesture unlock, background tab).
-6. **Testing:** Merge IQ FileSource (PR #6) to enable hardware-free development.
-
-## Follow-ups (GitHub issues to create)
-
-1. Set up dev Docker Compose for OpenWebRX+ fork with SDRplay support
-2. Merge/cherry-pick IQ FileSource (PR #6) for testing
-3. Implement scanner service (SdrSourceEventClient + FftChain + retune loop)
-4. Implement signal detection (FFT peak finding, noise floor tracking)
-5. Implement classification pipeline (modulation ID, VAD)
-6. Implement recording service (extend AudioRecorder pattern)
-7. Create SQLite logging schema
-8. Build mobile scanner UI (activity feed + listening view)
-9. Add scanner API endpoints (WebSocket + REST)
-10. Mobile audio handling (gesture unlock, background keep-alive)
+## Hardware notes
+- SDRplay RSP1a on Beast (dev machine), serial 19030F2B96
+- Only one `sdrplay_apiService` daemon at a time — kill duplicates with `sudo pkill -f sdrplay_apiService`
+- Docker needs `privileged: true` for SDRplay USB re-enumeration
+- hwVer=255 means daemon can't talk to device (stale shm or multiple daemons)
+- rx_sdr built at `/tmp/rx_tools/build/rx_sdr` for IQ recording
