@@ -777,6 +777,177 @@ def run_all_tests() -> int:
     return failed
 
 
+def analyze_scan_captures(data_dir: str = "scanner/test_data", squelch: float = 30.0):
+    """Analyze multi-band IQ captures and report signals/voice detections.
+
+    Expects files named scan_BANDNAME.cf32 with .json sidecars.
+    Run capture_multiband_from_pi() first to create the files.
+
+    Usage:
+        python -m scanner.test_e2e --analyze-scan
+    """
+    from scanner.fft_scan import compute_channel_power
+    from scanner.demod import demod_channel
+    from scanner.voice_detect import VoiceDetector, Detection
+    from scanner.frequencies import get_default_scan_list
+
+    all_channels = get_default_scan_list()
+    data_path = Path(data_dir)
+    results = []
+
+    # Find all scan_*.cf32 files
+    captures = sorted(data_path.glob("scan_*.cf32"))
+    if not captures:
+        print(f"No scan_*.cf32 files found in {data_dir}")
+        print("Run: python -m scanner.test_e2e --capture-scan")
+        return results
+
+    print(f"Analyzing {len(captures)} band captures from {data_dir}")
+    print()
+
+    for cf32_path in captures:
+        json_path = cf32_path.with_suffix(".json")
+        band_name = cf32_path.stem.replace("scan_", "")
+
+        if not json_path.exists():
+            print(f"  Skipping {cf32_path.name} — no .json sidecar")
+            continue
+
+        with open(json_path) as f:
+            meta = json.load(f)
+
+        raw = np.fromfile(str(cf32_path), dtype=np.float32)
+        iq = raw[0::2] + 1j * raw[1::2]
+        sr = meta["sample_rate"]
+        cf = meta["center_frequency"]
+        dur = len(iq) / sr
+
+        lo = cf - sr // 2
+        hi = cf + sr // 2
+        band_channels = [c for c in all_channels if lo <= c["freq"] <= hi]
+
+        if not band_channels:
+            continue
+
+        powers = compute_channel_power(
+            iq[: min(262144, len(iq))], sr, cf,
+            [c["freq"] for c in band_channels],
+            [c.get("bandwidth", 12500) for c in band_channels],
+        )
+
+        print(f"--- {band_name} ({cf/1e6:.3f} MHz, {dur:.1f}s) ---")
+
+        for ch in sorted(band_channels, key=lambda c: -powers.get(c["freq"], -999)):
+            p = powers.get(ch["freq"], -999)
+            if p < squelch:
+                continue
+
+            try:
+                audio = demod_channel(
+                    iq[: min(int(sr), len(iq))], sr, cf,
+                    ch["freq"], ch.get("bandwidth", 12500),
+                )
+                detector = VoiceDetector(sample_rate=16000)
+                for i in range(0, len(audio) - 480, 480):
+                    detector.process_frame(audio[i : i + 480].tobytes())
+                decision, confidence = detector.get_decision()
+            except Exception:
+                decision, confidence = Detection.NOISE, 0.0
+
+            entry = {
+                "band": band_name, "channel": ch["name"], "freq": ch["freq"],
+                "power": round(p, 1), "detection": decision.value,
+                "confidence": round(confidence, 2),
+            }
+            results.append(entry)
+            marker = " <<<" if decision == Detection.VOICE else ""
+            print(f"  {ch['name']:<25s} {p:5.1f} dB  {decision.value:>8s} (conf={confidence:.2f}){marker}")
+
+    # Summary
+    voice = [r for r in results if r["detection"] == "voice"]
+    strong = [r for r in results if r["power"] > 35]
+    print(f"\nSummary: {len(results)} channels above squelch, {len(strong)} strong (>35 dB), {len(voice)} voice")
+    if voice:
+        for v in voice:
+            print(f"  VOICE: {v['channel']} {v['freq']/1e6:.4f} MHz S={v['power']} dB conf={v['confidence']}")
+    return results
+
+
+def capture_multiband_from_pi(
+    host: str = "pi@100.66.209.75",
+    bands: list[tuple[str, int]] | None = None,
+    duration: float = 5.0,
+    output_dir: str = "scanner/test_data",
+):
+    """Capture IQ from multiple bands on pi-sdr-1 using rtl_sdr.
+
+    Stops the scanner container, captures each band, restarts scanner.
+    """
+    if bands is None:
+        bands = [
+            ("NOAA", 162_475_000),
+            ("GMRS", 462_637_000),
+            ("HAM_2m", 146_940_000),
+            ("Marine", 156_625_000),
+        ]
+
+    sample_rate = 2_400_000
+    n_samples = int(sample_rate * duration * 2)  # *2 for I+Q uint8
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Stop scanner
+    print("Stopping scanner on Pi...")
+    subprocess.run(
+        ["ssh", host.split("@")[1] if "@" in host else host,
+         "cd /opt/openwebrx && sudo docker compose stop scanner"],
+        capture_output=True,
+    )
+
+    import time
+    time.sleep(2)
+
+    for name, freq in bands:
+        raw_path = f"/tmp/scan_{name}.raw"
+        local_cf32 = str(out / f"scan_{name}.cf32")
+        local_json = str(out / f"scan_{name}.json")
+
+        print(f"Capturing {name} at {freq/1e6:.3f} MHz for {duration}s...")
+        subprocess.run(
+            ["ssh", host, f"rtl_sdr -f {freq} -s {sample_rate} -n {n_samples} {raw_path}"],
+            capture_output=True, timeout=int(duration + 10),
+        )
+
+        # Download and convert
+        with tempfile.NamedTemporaryFile(suffix=".raw") as tmp:
+            subprocess.run(["scp", f"{host}:{raw_path}", tmp.name], capture_output=True)
+            raw = np.fromfile(tmp.name, dtype=np.uint8)
+
+        if len(raw) == 0:
+            print(f"  ERROR: no data captured for {name}")
+            continue
+
+        floats = (raw.astype(np.float32) - 127.5) / 127.5
+        floats.tofile(local_cf32)
+        meta = {
+            "sample_rate": sample_rate,
+            "center_frequency": freq,
+            "description": f"{name} band capture from pi-sdr-1",
+        }
+        with open(local_json, "w") as f:
+            json.dump(meta, f, indent=2)
+        print(f"  Saved {local_cf32} ({len(raw)/2/sample_rate:.1f}s)")
+
+    # Restart scanner
+    print("Restarting scanner on Pi...")
+    subprocess.run(
+        ["ssh", host.split("@")[1] if "@" in host else host,
+         "cd /opt/openwebrx && sudo docker compose up -d scanner"],
+        capture_output=True,
+    )
+    print("Done!")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Radio scanner end-to-end tests",
@@ -796,6 +967,16 @@ if __name__ == "__main__":
         "--generate-iq",
         action="store_true",
         help="Generate synthetic test IQ files",
+    )
+    parser.add_argument(
+        "--capture-scan",
+        action="store_true",
+        help="Capture IQ from multiple bands on pi-sdr-1",
+    )
+    parser.add_argument(
+        "--analyze-scan",
+        action="store_true",
+        help="Analyze previously captured multi-band IQ files",
     )
     parser.add_argument(
         "--iq-file",
@@ -844,6 +1025,10 @@ if __name__ == "__main__":
         except AssertionError as e:
             print(f"  FAILED: {e}")
             sys.exit(1)
+    elif args.capture_scan:
+        capture_multiband_from_pi(host=args.host, duration=args.duration)
+    elif args.analyze_scan:
+        analyze_scan_captures()
     elif args.generate_iq:
         generate_synthetic_test_files()
     else:
