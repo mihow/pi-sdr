@@ -89,8 +89,77 @@ NOAA_WEATHER = [
     {"freq": 162_550_000, "name": "NOAA WX7", "mod": "nfm", "group": "NOAA", "bandwidth": 25000},
 ]
 
+# Aviation Air Band (AM modulation, 25 kHz spacing)
+AIR_BAND = [
+    {"freq": 118_000_000, "name": "Air 118.0 Approach", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 118_300_000, "name": "Air 118.3", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 118_700_000, "name": "Air 118.7", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 119_100_000, "name": "Air 119.1", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 119_500_000, "name": "Air 119.5", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 119_900_000, "name": "Air 119.9", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 120_500_000, "name": "Air 120.5 Tower", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 121_500_000, "name": "Air Guard/Emergency", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 121_900_000, "name": "Air 121.9 Ground", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 122_750_000, "name": "Air 122.75 Unicom", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 123_000_000, "name": "Air 123.0 Unicom", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 123_450_000, "name": "Air 123.45 Air-Air", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 124_000_000, "name": "Air 124.0", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 125_000_000, "name": "Air 125.0", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 126_200_000, "name": "Air 126.2 ATIS", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 127_000_000, "name": "Air 127.0 Center", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 128_000_000, "name": "Air 128.0", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 132_000_000, "name": "Air 132.0", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 134_000_000, "name": "Air 134.0", "mod": "am", "group": "Air", "bandwidth": 25000},
+    {"freq": 135_000_000, "name": "Air 135.0", "mod": "am", "group": "Air", "bandwidth": 25000},
+]
+
+# Railroad (AAR channels, NFM)
+RAILROAD = [
+    {"freq": 160_215_000, "name": "RR Ch 1 Road", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 160_245_000, "name": "RR Ch 2 Road", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 160_320_000, "name": "RR Ch 3 Road", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 160_350_000, "name": "RR Ch 4 Road", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 160_380_000, "name": "RR Ch 5 Road", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 160_410_000, "name": "RR Ch 6 Yard", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 160_440_000, "name": "RR Ch 7 Yard", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 160_470_000, "name": "RR Ch 8 Yard", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 161_100_000, "name": "RR End of Train", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 161_550_000, "name": "RR Dispatcher", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+    {"freq": 161_565_000, "name": "RR Police", "mod": "nfm", "group": "Railroad", "bandwidth": 12500},
+]
+
+# FM Broadcast (WFM — wideband FM, 200 kHz bandwidth)
+# Just a few common frequencies to test; user can add more
+FM_BROADCAST = [
+    {"freq":  88_500_000, "name": "FM 88.5", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+    {"freq":  91_100_000, "name": "FM 91.1", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+    {"freq":  93_100_000, "name": "FM 93.1", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+    {"freq":  95_500_000, "name": "FM 95.5", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+    {"freq":  97_300_000, "name": "FM 97.3", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+    {"freq":  99_700_000, "name": "FM 99.7", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+    {"freq": 101_300_000, "name": "FM 101.3", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+    {"freq": 103_500_000, "name": "FM 103.5", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+    {"freq": 105_100_000, "name": "FM 105.1", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+    {"freq": 107_100_000, "name": "FM 107.1", "mod": "wfm", "group": "FM", "bandwidth": 200000},
+]
+
+# NOAA Weather Satellites (APT, 137 MHz)
+WX_SATELLITES = [
+    {"freq": 137_100_000, "name": "NOAA-19 APT", "mod": "nfm", "group": "WX Sat", "bandwidth": 40000},
+    {"freq": 137_620_000, "name": "NOAA-18 APT", "mod": "nfm", "group": "WX Sat", "bandwidth": 40000},
+    {"freq": 137_912_500, "name": "NOAA-15 APT", "mod": "nfm", "group": "WX Sat", "bandwidth": 40000},
+]
+
+# ISM / IoT bands
+ISM_433 = [
+    {"freq": 433_920_000, "name": "ISM 433.92", "mod": "nfm", "group": "ISM", "bandwidth": 25000},
+]
+
 # Default scan list: GMRS first (most likely voice), then HAM, then others
-ALL_CHANNELS = GMRS_CHANNELS + FRS_EXTRA_CHANNELS + HAM_2M + HAM_70CM + MURS + MARINE + NOAA_WEATHER
+ALL_CHANNELS = (
+    GMRS_CHANNELS + FRS_EXTRA_CHANNELS + HAM_2M + HAM_70CM + MURS + MARINE
+    + NOAA_WEATHER + AIR_BAND + RAILROAD + FM_BROADCAST + WX_SATELLITES + ISM_433
+)
 
 
 def get_default_scan_list() -> list[dict]:
@@ -117,13 +186,18 @@ def get_groups() -> list[str]:
 # Groups that should be scanned together in a single SDR window when possible.
 # Each entry maps a logical band name to the channel groups it contains.
 BAND_GROUPS = [
-    {"name": "GMRS", "groups": ["GMRS"]},
-    {"name": "FRS", "groups": ["FRS"]},
+    {"name": "FM", "groups": ["FM"]},
+    {"name": "Air", "groups": ["Air"]},
+    {"name": "WX Sat", "groups": ["WX Sat"]},
     {"name": "HAM 2m", "groups": ["HAM 2m"]},
-    {"name": "HAM 70cm", "groups": ["HAM 70cm"]},
     {"name": "MURS", "groups": ["MURS"]},
     {"name": "Marine", "groups": ["Marine"]},
+    {"name": "Railroad", "groups": ["Railroad"]},
     {"name": "NOAA", "groups": ["NOAA"]},
+    {"name": "ISM", "groups": ["ISM"]},
+    {"name": "HAM 70cm", "groups": ["HAM 70cm"]},
+    {"name": "GMRS", "groups": ["GMRS"]},
+    {"name": "FRS", "groups": ["FRS"]},
 ]
 
 
