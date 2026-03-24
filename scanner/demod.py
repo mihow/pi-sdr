@@ -177,6 +177,49 @@ def fm_demodulate(
     return (audio * 32767).astype(np.int16)
 
 
+def am_demodulate(
+    channel_iq: np.ndarray,
+    sample_rate: int,
+    audio_rate: int = 16_000,
+) -> np.ndarray:
+    """Demodulate AM audio from channel IQ data.
+
+    Uses envelope detection (magnitude of IQ signal).
+
+    Args:
+        channel_iq: complex64 channel IQ at intermediate rate.
+        sample_rate: Sample rate of channel_iq.
+        audio_rate: Output audio sample rate.
+
+    Returns:
+        int16 PCM audio at audio_rate.
+    """
+    if len(channel_iq) < 2:
+        return np.array([], dtype=np.int16)
+
+    # Envelope detection: magnitude of complex signal
+    envelope = np.abs(channel_iq).astype(np.float32)
+
+    # Remove DC component (carrier)
+    envelope = envelope - np.mean(envelope)
+
+    # Resample to audio_rate
+    if sample_rate != audio_rate:
+        g = gcd(sample_rate, audio_rate)
+        up = audio_rate // g
+        down = sample_rate // g
+        envelope = resample_poly(envelope, up, down).astype(np.float32)
+
+    # AGC
+    rms = float(np.sqrt(np.mean(envelope ** 2)))
+    if rms > 0:
+        gain = min(0.5 / rms, 5.0)
+        envelope = envelope * gain
+
+    envelope = np.clip(envelope, -1.0, 1.0)
+    return (envelope * 32767).astype(np.int16)
+
+
 def demod_channel(
     iq: np.ndarray,
     sample_rate: int,
@@ -184,10 +227,11 @@ def demod_channel(
     channel_freq: int,
     channel_bw: int = 12_500,
     audio_rate: int = 16_000,
+    mod: str = "nfm",
 ) -> np.ndarray:
     """Extract and demodulate a channel in one call.
 
-    Convenience wrapper combining extract_channel and fm_demodulate.
+    Adapts demod parameters based on modulation type and channel bandwidth.
 
     Args:
         iq: complex64 wideband IQ samples.
@@ -196,12 +240,22 @@ def demod_channel(
         channel_freq: Target channel frequency.
         channel_bw: Channel bandwidth in Hz.
         audio_rate: Output audio sample rate.
+        mod: Modulation type — "nfm", "wfm", or "am".
 
     Returns:
         int16 PCM audio at audio_rate.
     """
-    # Adapt parameters based on channel bandwidth
-    if channel_bw >= 100_000:
+    # Determine intermediate rate and demod parameters from mod type + bandwidth
+    if mod == "am":
+        # AM (Air Band): envelope detection
+        intermediate_rate = 48_000
+        channel_iq = extract_channel(
+            iq, sample_rate, center_freq, channel_freq,
+            channel_bw=channel_bw, output_rate=intermediate_rate,
+        )
+        return am_demodulate(channel_iq, intermediate_rate, audio_rate=audio_rate)
+
+    elif mod == "wfm" or channel_bw >= 100_000:
         # Wideband FM (broadcast): 75 kHz deviation, higher intermediate rate
         intermediate_rate = 192_000
         max_deviation = 75_000.0

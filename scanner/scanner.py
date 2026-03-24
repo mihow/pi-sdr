@@ -277,6 +277,7 @@ class Scanner:
                         audio = demod_channel(
                             iq, self.backend.get_sample_rate(),
                             window["center"], ch.freq, ch.bandwidth,
+                            mod=ch.mod,
                         )
 
                         # Stream audio while analyzing (user can hear what's being checked)
@@ -492,7 +493,8 @@ class Scanner:
 
             # Demod and stream audio
             audio = demod_channel(iq, self.backend.get_sample_rate(),
-                                  window["center"], ch.freq, ch.bandwidth)
+                                  window["center"], ch.freq, ch.bandwidth,
+                                  mod=ch.mod)
             audio_bytes = audio.tobytes()
 
             if self.broadcaster:

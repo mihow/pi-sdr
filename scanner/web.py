@@ -585,7 +585,7 @@ function renderChannels() {
     const color = smeterColor(ch.smeter);
     return `<div class="${cls.join(' ')}">
       <div class="freq-col" onclick="tuneToChannel(${ch.freq})" style="cursor:pointer" title="Click to listen">${ch.freq_mhz}</div>
-      <div class="name-col"><span class="ch-name" onclick="renameChannel(${ch.freq},'${ch.name.replace(/'/g,"\\'")}')">${ch.name}</span><br><span class="group">${ch.group}</span></div>
+      <div class="name-col"><span class="ch-name" onclick="renameChannel(${ch.freq},'${ch.name.replace(/'/g,"\\'")}')">${ch.name}</span><br><span class="group">${ch.group} · ${ch.mod.toUpperCase()}</span></div>
       <div class="smeter-bar"><div class="fill" style="width:${fill}%;background:${color}"></div></div>
       <div class="stats-col">
         ${ch.signal_count > 0 ? ch.signal_count + ' sig' : ''}
