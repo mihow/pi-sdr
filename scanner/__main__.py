@@ -34,7 +34,7 @@ def main():
 
     # Create SDR backend
     if args.iq_file:
-        from .test_e2e import FileSdrBackend
+        from .sdr_backend import FileSdrBackend
         backend = FileSdrBackend(args.iq_file, sample_rate=2_400_000, center_freq=0)
     else:
         backend = SoapySdrBackend(driver=args.driver, gain=args.gain)
@@ -72,7 +72,7 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
 
     # Start web dashboard
-    app = create_app(scanner)
+    app = create_app(scanner, broadcaster)
     log.info("Dashboard at http://0.0.0.0:%d", args.web_port)
     app.run(host="0.0.0.0", port=args.web_port, threaded=True)
 

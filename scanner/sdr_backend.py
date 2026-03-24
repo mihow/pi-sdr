@@ -5,7 +5,9 @@ Provides a protocol for SDR backends and a concrete SoapySDR implementation.
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -56,6 +58,10 @@ class SdrBackend(Protocol):
 
     def is_open(self) -> bool:
         """Return True if the device is open and streaming."""
+        ...
+
+    def get_source_name(self) -> str:
+        """Return a human-readable name for the SDR source."""
         ...
 
 
@@ -187,3 +193,137 @@ class SoapySdrBackend:
     def is_open(self) -> bool:
         """Return True if the device is open and streaming."""
         return self._is_open
+
+    def get_source_name(self) -> str:
+        return f"SDR ({self._driver})"
+
+
+class FileSdrBackend:
+    """SdrBackend that reads from pre-recorded .cf32 IQ files.
+
+    The .cf32 format is interleaved float32 (I, Q, I, Q...), 8 bytes per
+    complex sample.  A JSON sidecar file (same name, .json extension) can
+    supply ``sample_rate``, ``center_frequency``, and ``description``.
+    """
+
+    def __init__(
+        self,
+        file_path: str,
+        sample_rate: int = 2_400_000,
+        center_freq: int = 0,
+        loop: bool = True,
+    ) -> None:
+        """
+        Args:
+            file_path: Path to .cf32 file (interleaved float32 I/Q).
+            sample_rate: Sample rate the file was recorded at.
+            center_freq: Center frequency the file was recorded at.
+            loop: Whether to loop back to start when file ends.
+        """
+        self._file_path = Path(file_path)
+        self._sample_rate = sample_rate
+        self._center_freq = center_freq
+        self._loop = loop
+        self._is_open = False
+        self._iq_data: np.ndarray | None = None
+        self._read_pos = 0
+
+        # Try loading metadata from sidecar JSON
+        sidecar = self._file_path.with_suffix(".json")
+        if sidecar.exists():
+            with open(sidecar) as f:
+                meta = json.load(f)
+            if "sample_rate" in meta:
+                self._sample_rate = int(meta["sample_rate"])
+            if "center_frequency" in meta:
+                self._center_freq = int(meta["center_frequency"])
+            logger.info(
+                "Loaded sidecar metadata: sr=%d, cf=%d, desc=%s",
+                self._sample_rate,
+                self._center_freq,
+                meta.get("description", ""),
+            )
+
+    def open(self) -> None:
+        """Load the IQ file into memory."""
+        if self._is_open:
+            return
+        if not self._file_path.exists():
+            raise FileNotFoundError(f"IQ file not found: {self._file_path}")
+
+        raw = np.fromfile(str(self._file_path), dtype=np.float32)
+        if len(raw) % 2 != 0:
+            raw = raw[:-1]  # drop last sample if odd
+        # View as complex64: each pair of float32 is one complex sample
+        self._iq_data = raw.view(np.complex64)
+        self._read_pos = 0
+        self._is_open = True
+
+        duration_s = len(self._iq_data) / self._sample_rate
+        logger.info(
+            "Opened IQ file: %s (%d samples, %.2fs at %d Hz, center %.3f MHz)",
+            self._file_path.name,
+            len(self._iq_data),
+            duration_s,
+            self._sample_rate,
+            self._center_freq / 1e6,
+        )
+
+    def close(self) -> None:
+        """Release the IQ data."""
+        self._iq_data = None
+        self._read_pos = 0
+        self._is_open = False
+
+    def tune(self, center_freq: int) -> None:
+        """Set the center frequency (no-op for file backend, just records it)."""
+        if center_freq != self._center_freq:
+            logger.warning(
+                "FileSdrBackend: tune to %.3f MHz ignored, file recorded at %.3f MHz",
+                center_freq / 1e6,
+                self._center_freq / 1e6,
+            )
+
+    def read_iq(self, num_samples: int = 262144) -> np.ndarray:
+        """Read IQ samples from the file, optionally looping."""
+        if not self._is_open or self._iq_data is None:
+            raise RuntimeError("FileSdrBackend not open")
+
+        total = len(self._iq_data)
+        buf = np.zeros(num_samples, dtype=np.complex64)
+        written = 0
+
+        while written < num_samples:
+            remaining_file = total - self._read_pos
+            remaining_buf = num_samples - written
+            chunk_size = min(remaining_file, remaining_buf)
+
+            if chunk_size > 0:
+                buf[written : written + chunk_size] = self._iq_data[
+                    self._read_pos : self._read_pos + chunk_size
+                ]
+                self._read_pos += chunk_size
+                written += chunk_size
+
+            if self._read_pos >= total:
+                if self._loop:
+                    self._read_pos = 0
+                else:
+                    break  # return what we have, padded with zeros
+
+        return buf[:written] if not self._loop and written < num_samples else buf
+
+    def get_center_freq(self) -> int:
+        return self._center_freq
+
+    def get_sample_rate(self) -> int:
+        return self._sample_rate
+
+    def get_max_bandwidth(self) -> int:
+        return self._sample_rate
+
+    def is_open(self) -> bool:
+        return self._is_open
+
+    def get_source_name(self) -> str:
+        return f"IQ File: {self._file_path.name}"

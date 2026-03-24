@@ -124,6 +124,105 @@ def compute_channel_power(
     return results
 
 
+def find_peaks(
+    iq: np.ndarray,
+    sample_rate: int,
+    center_freq: int,
+    threshold_db: float = -45.0,
+    min_bandwidth: int = 5000,
+    known_freqs: list[int] | None = None,
+    freq_tolerance: int = 5000,
+    fft_size: int = 4096,
+) -> list[dict]:
+    """Find signal peaks in the FFT that don't match known frequencies.
+
+    Returns list of {"freq": int, "power_db": float} for each unknown peak.
+    """
+    n_samples = len(iq)
+    if n_samples < fft_size:
+        fft_size = n_samples
+
+    n_segments = max(1, n_samples // fft_size)
+
+    # Apply Hann window and accumulate power spectra
+    window = np.hanning(fft_size).astype(np.float32)
+    window_power = np.mean(window**2)
+
+    power_spectrum = np.zeros(fft_size, dtype=np.float64)
+    for i in range(n_segments):
+        segment = iq[i * fft_size : (i + 1) * fft_size]
+        windowed = segment * window
+        spectrum = np.fft.fft(windowed)
+        power_spectrum += np.abs(spectrum) ** 2
+
+    power_spectrum /= n_segments * window_power
+
+    # Convert to dB
+    with np.errstate(divide="ignore"):
+        power_db = 10.0 * np.log10(np.maximum(power_spectrum, 1e-20))
+
+    bin_hz = sample_rate / fft_size
+
+    # Find bins above threshold
+    above = power_db > threshold_db
+
+    # Group adjacent above-threshold bins into peaks
+    peaks: list[dict] = []
+    in_peak = False
+    peak_start = 0
+    for i in range(fft_size):
+        if above[i] and not in_peak:
+            in_peak = True
+            peak_start = i
+        elif not above[i] and in_peak:
+            in_peak = False
+            peak_end = i
+            # Check minimum bandwidth
+            peak_bins = peak_end - peak_start
+            if peak_bins * bin_hz >= min_bandwidth:
+                # Compute center frequency and total power
+                peak_power = power_spectrum[peak_start:peak_end]
+                # Weighted center bin
+                bins = np.arange(peak_start, peak_end)
+                center_bin = np.average(bins, weights=peak_power)
+                # Convert bin to frequency offset from center_freq
+                if center_bin > fft_size / 2:
+                    offset_hz = (center_bin - fft_size) * bin_hz
+                else:
+                    offset_hz = center_bin * bin_hz
+                freq = int(center_freq + offset_hz)
+                total_power_db = float(10.0 * np.log10(max(np.sum(peak_power), 1e-20)))
+                peaks.append({"freq": freq, "power_db": total_power_db})
+
+    # Close any peak at the end of the array
+    if in_peak:
+        peak_end = fft_size
+        peak_bins = peak_end - peak_start
+        if peak_bins * bin_hz >= min_bandwidth:
+            peak_power = power_spectrum[peak_start:peak_end]
+            bins = np.arange(peak_start, peak_end)
+            center_bin = np.average(bins, weights=peak_power)
+            if center_bin > fft_size / 2:
+                offset_hz = (center_bin - fft_size) * bin_hz
+            else:
+                offset_hz = center_bin * bin_hz
+            freq = int(center_freq + offset_hz)
+            total_power_db = float(10.0 * np.log10(max(np.sum(peak_power), 1e-20)))
+            peaks.append({"freq": freq, "power_db": total_power_db})
+
+    # Filter out peaks near known frequencies
+    if known_freqs:
+        filtered = []
+        for peak in peaks:
+            is_known = any(abs(peak["freq"] - kf) <= freq_tolerance for kf in known_freqs)
+            if not is_known:
+                filtered.append(peak)
+        peaks = filtered
+
+    logger.debug("find_peaks: %d unknown peaks found", len(peaks))
+    return peaks
+
+
 def find_active_channels(
     powers: dict[int, float],
     squelch_level: float,

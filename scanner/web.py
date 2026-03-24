@@ -7,21 +7,29 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import struct
 from pathlib import Path
 
 from flask import Flask, jsonify, request, Response
+from flask_sock import Sock
 
+from .audio_stream import AudioBroadcaster
 from .scanner import Scanner
 
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
+sock = Sock()
 scanner: Scanner | None = None
+broadcaster: AudioBroadcaster | None = None
 
 
-def create_app(scanner_instance: Scanner) -> Flask:
-    global scanner
+def create_app(scanner_instance: Scanner, broadcaster_instance: AudioBroadcaster | None = None) -> Flask:
+    global scanner, broadcaster
     scanner = scanner_instance
+    broadcaster = broadcaster_instance
+    sock.init_app(app)
     return app
 
 
@@ -122,6 +130,28 @@ body {
 }
 .squelch-row input[type=range] { flex: 1; }
 .squelch-row .val { font-family: monospace; min-width: 50px; }
+
+.audio-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  font-size: 13px;
+}
+.audio-controls button {
+  padding: 6px 12px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #222;
+  color: #eee;
+  font-size: 13px;
+  cursor: pointer;
+}
+.audio-controls button.active { background: #05a; border-color: #07c; }
+.audio-controls input[type=range] { flex: 1; max-width: 120px; }
+.audio-controls .val { font-family: monospace; min-width: 35px; }
 
 .group-filter {
   display: flex;
@@ -228,11 +258,33 @@ body {
 }
 .act-voice { color: #0f0; }
 .act-signal { color: #cc0; }
+.sdr-source { font-family: monospace; font-size: 11px; color: #666; margin-left: 8px; }
+.band-overview {
+  padding: 8px 16px;
+  background: #151515;
+  border-bottom: 1px solid #222;
+}
+.band-card {
+  display: inline-block;
+  padding: 6px 12px;
+  margin: 4px;
+  border-radius: 6px;
+  background: #222;
+  border: 1px solid #333;
+  font-size: 12px;
+  vertical-align: top;
+}
+.band-card.active { border-color: #05a; background: #1a1a3e; }
+.band-card .band-name { font-weight: bold; color: #0cf; }
+.band-card .band-range { color: #888; font-family: monospace; font-size: 11px; }
+.band-card .band-signals { color: #0a0; font-size: 11px; }
+.ch-name { cursor: pointer; }
+.ch-name:hover { text-decoration: underline; color: #fff; }
 </style>
 </head>
 <body>
 <div class="header">
-  <h1><span class="sdr-dot" id="sdr-dot"></span>Radio Scanner</h1>
+  <h1><span class="sdr-dot" id="sdr-dot"></span>Radio Scanner<span id="sdr-source" class="sdr-source"></span></h1>
   <div class="status-bar">
     <span class="freq" id="current-freq">---</span>
     <span id="current-name"></span>
@@ -251,6 +303,7 @@ body {
 <div class="controls">
   <button id="btn-scan" onclick="toggleScan()">Start Scan</button>
   <button id="btn-stop" onclick="stopScan()">Stop</button>
+  <button id="btn-discover" onclick="toggleAutoDiscover()">Auto-Discover</button>
 </div>
 
 <div class="squelch-row">
@@ -259,6 +312,17 @@ body {
     oninput="setSquelch(this.value)">
   <span class="val" id="squelch-val">-60 dB</span>
 </div>
+
+<div class="audio-controls">
+  <button id="audio-btn" onclick="toggleAudio()">Listen</button>
+  <button id="mute-btn" onclick="toggleMute()">Mute</button>
+  <label>Vol:</label>
+  <input type="range" id="volume" min="0" max="1" value="0.7" step="0.05"
+    oninput="setAudioVolume(this.value)">
+  <span class="val" id="vol-val">70%</span>
+</div>
+
+<div class="band-overview" id="band-overview"></div>
 
 <div class="group-filter" id="group-filter"></div>
 
@@ -273,6 +337,86 @@ body {
 let state = {};
 let activeGroup = "all";
 let pollInterval;
+
+let audioCtx = null;
+let audioWs = null;
+let audioQueue = [];
+let audioPlaying = false;
+let audioMuted = false;
+let audioVolume = 0.7;
+let audioNode = null;
+
+function toggleAudio() {
+  if (audioPlaying) {
+    stopAudio();
+  } else {
+    startAudio();
+  }
+}
+
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+  const gainNode = audioCtx.createGain();
+  gainNode.gain.value = audioVolume;
+  gainNode.connect(audioCtx.destination);
+
+  // ScriptProcessorNode for PCM playback
+  audioNode = audioCtx.createScriptProcessor(2048, 0, 1);
+  audioNode.onaudioprocess = (e) => {
+    const output = e.outputBuffer.getChannelData(0);
+    if (audioQueue.length > 0 && !audioMuted) {
+      const chunk = audioQueue.shift();
+      const samples = new Int16Array(chunk);
+      for (let i = 0; i < output.length; i++) {
+        output[i] = i < samples.length ? samples[i] / 32768.0 : 0;
+      }
+    } else {
+      output.fill(0);
+    }
+  };
+  audioNode.connect(gainNode);
+
+  // WebSocket connection
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  audioWs = new WebSocket(proto + '//' + location.host + '/ws/audio');
+  audioWs.binaryType = 'arraybuffer';
+  audioWs.onmessage = (e) => {
+    if (audioQueue.length < 20) {  // ~1.2s buffer max
+      audioQueue.push(e.data);
+    }
+  };
+  audioWs.onclose = () => { audioPlaying = false; updateAudioBtn(); };
+
+  audioPlaying = true;
+  updateAudioBtn();
+}
+
+function stopAudio() {
+  if (audioWs) { audioWs.close(); audioWs = null; }
+  if (audioNode) { audioNode.disconnect(); audioNode = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  audioQueue = [];
+  audioPlaying = false;
+  updateAudioBtn();
+}
+
+function setAudioVolume(val) {
+  audioVolume = parseFloat(val);
+  document.getElementById('vol-val').textContent = Math.round(val * 100) + '%';
+}
+
+function toggleMute() {
+  audioMuted = !audioMuted;
+  document.getElementById('mute-btn').textContent = audioMuted ? 'Unmute' : 'Mute';
+}
+
+function updateAudioBtn() {
+  const btn = document.getElementById('audio-btn');
+  if (btn) {
+    btn.textContent = audioPlaying ? 'Stop Audio' : 'Listen';
+    btn.classList.toggle('active', audioPlaying);
+  }
+}
 
 async function api(path, opts) {
   const r = await fetch('/api' + path, opts);
@@ -335,7 +479,7 @@ function renderChannels() {
     const color = smeterColor(ch.smeter);
     return `<div class="${cls.join(' ')}">
       <div class="freq-col">${ch.freq_mhz}</div>
-      <div class="name-col">${ch.name}<br><span class="group">${ch.group}</span></div>
+      <div class="name-col"><span class="ch-name" onclick="renameChannel(${ch.freq},'${ch.name.replace(/'/g,"\\'")}')">${ch.name}</span><br><span class="group">${ch.group}</span></div>
       <div class="smeter-bar"><div class="fill" style="width:${fill}%;background:${color}"></div></div>
       <div class="stats-col">
         ${ch.signal_count > 0 ? ch.signal_count + ' sig' : ''}
@@ -406,6 +550,16 @@ function updateHeader() {
   } else {
     dwell.style.display = 'none';
   }
+
+  // SDR source
+  document.getElementById('sdr-source').textContent = state.sdr_source || '';
+
+  // Auto-discover button
+  const discBtn = document.getElementById('btn-discover');
+  if (discBtn) {
+    discBtn.classList.toggle('active', !!state.auto_discover);
+    discBtn.textContent = state.auto_discover ? 'Discover ON' : 'Auto-Discover';
+  }
 }
 
 function toggleActivity() {
@@ -429,10 +583,54 @@ function renderActivity() {
   }).join('');
 }
 
+async function renameChannel(freq, currentName) {
+  const name = prompt('Rename channel:', currentName);
+  if (name && name !== currentName) {
+    await api('/channel/rename', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({freq, name})});
+    poll();
+  }
+}
+
+async function toggleAutoDiscover() {
+  await api('/auto-discover', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({})});
+  poll();
+}
+
+function renderBands() {
+  if (!state.channels) return;
+  const bands = {};
+  state.channels.forEach(ch => {
+    if (!bands[ch.group]) bands[ch.group] = {channels: [], signals: 0, voices: 0};
+    bands[ch.group].channels.push(ch);
+    bands[ch.group].signals += ch.signal_count;
+    bands[ch.group].voices += ch.voice_count;
+  });
+
+  const el = document.getElementById('band-overview');
+  el.innerHTML = Object.entries(bands).map(([name, b]) => {
+    const freqs = b.channels.map(c => c.freq);
+    const lo = (Math.min(...freqs) / 1e6).toFixed(3);
+    const hi = (Math.max(...freqs) / 1e6).toFixed(3);
+    const isActive = state.current_band === name;
+    const sigText = b.signals > 0 ? b.signals + ' sig' : '';
+    const voiceText = b.voices > 0 ? ', ' + b.voices + ' voice' : '';
+    return `<div class="band-card ${isActive ? 'active' : ''}">
+      <div class="band-name">${name}</div>
+      <div class="band-range">${lo} - ${hi} MHz</div>
+      <div class="band-signals">${sigText}${voiceText}</div>
+    </div>`;
+  }).join('');
+}
+
 async function poll() {
   try {
     state = await api('/state');
     updateHeader();
+    renderBands();
     renderChannels();
     renderActivity();
     // Only render groups on first load
@@ -488,3 +686,55 @@ def set_squelch():
     data = request.get_json()
     scanner.set_squelch(data["level"])
     return jsonify({"ok": True})
+
+
+@app.route("/api/channel/add", methods=["POST"])
+def add_channel():
+    data = request.get_json()
+    ch = scanner.add_channel(
+        freq=data["freq"],
+        name=data.get("name", ""),
+        group=data.get("group", "Discovered"),
+        mod=data.get("mod", "nfm"),
+        bandwidth=data.get("bandwidth", 12500),
+    )
+    return jsonify({"ok": True, "channel": ch.name})
+
+
+@app.route("/api/channel/rename", methods=["POST"])
+def rename_channel():
+    data = request.get_json()
+    ok = scanner.rename_channel(data["freq"], data["name"])
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/auto-discover", methods=["POST"])
+def toggle_auto_discover():
+    data = request.get_json()
+    scanner.state.auto_discover = data.get("enabled", not scanner.state.auto_discover)
+    return jsonify({"ok": True, "auto_discover": scanner.state.auto_discover})
+
+
+@sock.route("/ws/audio")
+def audio_ws(ws):
+    """Stream PCM audio to browser via WebSocket."""
+    if not broadcaster:
+        ws.close()
+        return
+
+    # Send audio format header
+    ws.send(struct.pack('<HHH', 16000, 16, 1))  # sample_rate, bit_depth, channels
+
+    q = broadcaster.subscribe()
+    try:
+        while True:
+            try:
+                data = q.get(timeout=1.0)
+                ws.send(data)
+            except queue.Empty:
+                # Send keepalive silence
+                pass
+    except Exception:
+        pass
+    finally:
+        broadcaster.unsubscribe(q)

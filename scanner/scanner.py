@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from .audio_stream import AudioBroadcaster
 from .demod import demod_channel
-from .fft_scan import compute_channel_power
+from .fft_scan import compute_channel_power, find_peaks
 from .frequencies import get_band_windows, get_default_scan_list
 from .recorder import VoiceRecorder
 from .sdr_backend import SdrBackend
@@ -59,6 +59,8 @@ class ScannerState:
     channel_dwell_start: float = 0.0
     activity_log: deque = field(default_factory=lambda: deque(maxlen=100))
     scan_cycle_time: float = 0.0
+    sdr_source: str = ""
+    auto_discover: bool = False
 
 
 class Scanner:
@@ -94,6 +96,22 @@ class Scanner:
                 bandwidth=ch.get("bandwidth", 12500),
             )
 
+    def add_channel(self, freq: int, name: str = "", group: str = "Discovered",
+                    mod: str = "nfm", bandwidth: int = 12500) -> ChannelState:
+        """Add a new channel. If no name, generate one from frequency."""
+        if not name:
+            name = f"{freq/1e6:.4f} MHz"
+        ch = ChannelState(freq=freq, name=name, mod=mod, group=group, bandwidth=bandwidth)
+        self.state.channels[freq] = ch
+        return ch
+
+    def rename_channel(self, freq: int, name: str) -> bool:
+        """Rename a channel."""
+        if freq in self.state.channels:
+            self.state.channels[freq].name = name
+            return True
+        return False
+
     def _get_scan_list(self) -> list[ChannelState]:
         """Get list of non-skipped channels."""
         return [ch for ch in self.state.channels.values() if not ch.skip]
@@ -104,6 +122,7 @@ class Scanner:
             return
         self._stop_event.clear()
         self.state.scanning = True
+        self.state.sdr_source = self.backend.get_source_name()
         self._scan_thread = threading.Thread(target=self._scan_loop, daemon=True)
         self._scan_thread.start()
         log.info("Scanning started")
@@ -190,6 +209,17 @@ class Scanner:
                     if ch.freq in powers:
                         ch.last_smeter = powers[ch.freq]
                         self.state.scan_index += 1
+
+                # Auto-discover unknown signals
+                if self.state.auto_discover:
+                    known = [ch.freq for ch in window_channels]
+                    peaks = find_peaks(iq, self.backend.get_sample_rate(),
+                                       window["center"], self.state.squelch_level,
+                                       known_freqs=known)
+                    for peak in peaks:
+                        self.add_channel(peak["freq"], group=window["name"])
+                        log.info("Auto-discovered signal at %.4f MHz (%.1f dB)",
+                                 peak["freq"]/1e6, peak["power_db"])
 
                 # Check for active signals
                 for ch in window_channels:
@@ -434,6 +464,8 @@ class Scanner:
             "channel_dwell_elapsed": dwell_elapsed,
             "activity_log": list(self.state.activity_log),
             "scan_cycle_time": round(self.state.scan_cycle_time, 2),
+            "sdr_source": self.state.sdr_source,
+            "auto_discover": self.state.auto_discover,
         }
 
     def shutdown(self):
