@@ -847,23 +847,52 @@ async function poll() {
     renderFFT();
     renderActivity();
     if (!document.querySelector('.group-filter button')) renderGroups();
+    // Restore fast polling on reconnect
+    if (pollInterval._slow) {
+      clearInterval(pollInterval);
+      pollInterval = setInterval(poll, 500);
+      pollInterval._slow = false;
+    }
   } catch(e) {
     lastPollOk = false;
     pollFailCount++;
-    console.error('Poll error:', e);
+    // Back off polling when disconnected: 3s after 5 fails, 10s after 20
+    if (pollFailCount === 5) {
+      clearInterval(pollInterval);
+      pollInterval = setInterval(poll, 3000);
+      pollInterval._slow = true;
+    } else if (pollFailCount === 20) {
+      clearInterval(pollInterval);
+      pollInterval = setInterval(poll, 10000);
+      pollInterval._slow = true;
+    }
   }
   updateConnectionStatus();
 }
 
 function updateConnectionStatus() {
   const el = document.getElementById('conn-status');
+  const dot = document.getElementById('sdr-dot');
   if (!el) return;
   if (lastPollOk) {
     el.textContent = 'Connected';
     el.style.color = '#0a0';
+    // SDR dot reflects backend state
+    if (dot) dot.style.background = state.sdr_connected ? '#0a0' : '#a00';
+    document.body.style.opacity = '1';
   } else {
     el.textContent = 'Disconnected (' + pollFailCount + ')';
     el.style.color = '#a00';
+    // Force SDR dot red when frontend can't reach backend
+    if (dot) dot.style.background = '#a00';
+    // Dim the UI to make it obvious
+    document.body.style.opacity = '0.5';
+    // Update scan badge to show disconnected
+    const scan = document.getElementById('scan-badge');
+    if (scan) {
+      scan.textContent = 'OFFLINE';
+      scan.className = 'badge badge-noise';
+    }
   }
 }
 
