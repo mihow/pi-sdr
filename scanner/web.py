@@ -172,6 +172,23 @@ body {
 }
 .group-filter button.active { background: #05a; color: #fff; border-color: #07c; }
 
+.sort-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px;
+  background: #151515;
+  font-size: 12px;
+}
+.sort-row select {
+  background: #222;
+  color: #eee;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.badge-listening { background: #a0a; color: #fff; animation: pulse 1s infinite; }
 .channel-list { padding: 0 0 80px 0; }
 .channel {
   display: flex;
@@ -342,6 +359,17 @@ body {
 
 <div class="group-filter" id="group-filter"></div>
 
+<div class="sort-row">
+  <label>Sort:</label>
+  <select id="sort-select" onchange="sortChannels(this.value)">
+    <option value="freq">Frequency</option>
+    <option value="recent">Recent Activity</option>
+    <option value="signal">Most Signals</option>
+    <option value="voice">Most Voice</option>
+    <option value="name">Name</option>
+  </select>
+</div>
+
 <div class="activity-section">
   <button class="activity-toggle" onclick="toggleActivity()">Activity Log</button>
   <div class="activity-log" id="activity-log" style="display:none"></div>
@@ -352,6 +380,7 @@ body {
 <script>
 let state = {};
 let activeGroup = "all";
+let sortMode = "freq";
 let pollInterval;
 
 let audioCtx = null;
@@ -485,6 +514,31 @@ function renderChannels() {
     channels = channels.filter(c => c.group === activeGroup);
   }
 
+  // Sort channels
+  channels = [...channels];
+  switch(sortMode) {
+    case 'recent':
+      channels.sort((a, b) => {
+        const aTime = a.last_voice || a.last_signal || '';
+        const bTime = b.last_voice || b.last_signal || '';
+        return bTime.localeCompare(aTime);
+      });
+      break;
+    case 'signal':
+      channels.sort((a, b) => b.signal_count - a.signal_count);
+      break;
+    case 'voice':
+      channels.sort((a, b) => b.voice_count - a.voice_count);
+      break;
+    case 'name':
+      channels.sort((a, b) => a.name.localeCompare(b.name));
+      break;
+    case 'freq':
+    default:
+      channels.sort((a, b) => a.freq - b.freq);
+      break;
+  }
+
   list.innerHTML = channels.map(ch => {
     const cls = ['channel'];
     if (ch.active) cls.push('active');
@@ -494,7 +548,7 @@ function renderChannels() {
     const fill = smeterWidth(ch.smeter);
     const color = smeterColor(ch.smeter);
     return `<div class="${cls.join(' ')}">
-      <div class="freq-col">${ch.freq_mhz}</div>
+      <div class="freq-col" onclick="tuneToChannel(${ch.freq})" style="cursor:pointer" title="Click to listen">${ch.freq_mhz}</div>
       <div class="name-col"><span class="ch-name" onclick="renameChannel(${ch.freq},'${ch.name.replace(/'/g,"\\'")}')">${ch.name}</span><br><span class="group">${ch.group}</span></div>
       <div class="smeter-bar"><div class="fill" style="width:${fill}%;background:${color}"></div></div>
       <div class="stats-col">
@@ -528,7 +582,10 @@ function updateHeader() {
   det.className = 'badge badge-' + d;
 
   const scan = document.getElementById('scan-badge');
-  if (state.paused_on_voice) {
+  if (state.current_detection === 'listening') {
+    scan.textContent = 'LISTENING';
+    scan.className = 'badge badge-listening';
+  } else if (state.paused_on_voice) {
     scan.textContent = 'VOICE LOCKED';
     scan.className = 'badge badge-paused';
   } else if (state.scanning) {
@@ -622,6 +679,18 @@ async function toggleAutoDiscover() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({})});
   poll();
+}
+
+async function tuneToChannel(freq) {
+  await api('/tune/' + freq, {method: 'POST'});
+  // Auto-start audio when tuning
+  if (!audioPlaying) toggleAudio();
+  poll();
+}
+
+function sortChannels(mode) {
+  sortMode = mode;
+  renderChannels();
 }
 
 function renderBands() {
@@ -840,6 +909,19 @@ def toggle_auto_discover():
     data = request.get_json()
     scanner.state.auto_discover = data.get("enabled", not scanner.state.auto_discover)
     return jsonify({"ok": True, "auto_discover": scanner.state.auto_discover})
+
+
+@app.route("/api/tune/<int:freq>", methods=["POST"])
+def tune_to(freq: int):
+    """Tune to a specific channel for continuous listening."""
+    scanner.tune_to_channel(freq)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/listen/stop", methods=["POST"])
+def stop_listen():
+    scanner.stop_listening()
+    return jsonify({"ok": True})
 
 
 @sock.route("/ws/audio")

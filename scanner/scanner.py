@@ -12,6 +12,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+import numpy as np
+
 from .audio_stream import AudioBroadcaster
 from .demod import demod_channel
 from .fft_scan import compute_channel_power, find_peaks
@@ -87,6 +89,7 @@ class Scanner:
         self.state = ScannerState()
         self.detector = VoiceDetector(sample_rate=16000)
         self._scan_thread: threading.Thread | None = None
+        self._listen_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
         # Load default channels
@@ -123,8 +126,8 @@ class Scanner:
 
     def start_scanning(self):
         """Start the scan loop in a background thread."""
-        if self._scan_thread and self._scan_thread.is_alive():
-            return
+        # Stop any existing listen/scan thread first
+        self._stop_all_threads()
         self._stop_event.clear()
         self.state.scanning = True
         self.state.sdr_source = self.backend.get_source_name()
@@ -136,7 +139,18 @@ class Scanner:
         """Stop scanning."""
         self.state.scanning = False
         self._stop_event.set()
+        if self._scan_thread and self._scan_thread.is_alive():
+            self._scan_thread.join(timeout=2)
         log.info("Scanning stopped")
+
+    def _stop_all_threads(self):
+        """Stop any running scan or listen threads."""
+        self._stop_event.set()
+        if self._scan_thread and self._scan_thread.is_alive():
+            self._scan_thread.join(timeout=2)
+        if self._listen_thread and self._listen_thread.is_alive():
+            self._listen_thread.join(timeout=2)
+        self.state.scanning = False
 
     def _scan_loop(self):
         """Main scan loop: for each band window, tune, read IQ, FFT, check channels."""
@@ -413,6 +427,91 @@ class Scanner:
                 self._log_activity(
                     "recording", ch, duration=round(duration, 1), path=str(path),
                 )
+
+    def tune_to_channel(self, freq: int):
+        """Stop scanning and tune to a specific channel for continuous listening."""
+        self._stop_all_threads()
+
+        ch = self.state.channels.get(freq)
+        if not ch:
+            log.warning("Channel %d not found", freq)
+            return
+
+        self.state.current_freq = ch.freq
+        self.state.current_channel = ch.name
+        self.state.current_detection = "listening"
+
+        # Find the band window containing this channel
+        windows = get_band_windows(self.backend.get_max_bandwidth())
+        target_window = None
+        for w in windows:
+            for wch in w.get("channels", []):
+                if wch["freq"] == freq:
+                    target_window = w
+                    break
+            if target_window:
+                break
+
+        if not target_window:
+            # Fallback: tune directly to channel freq
+            target_window = {"center": freq, "name": "Manual"}
+
+        self._stop_event.clear()
+        self._listen_thread = threading.Thread(
+            target=self._listen_loop, args=(ch, target_window), daemon=True)
+        self._listen_thread.start()
+
+    def _listen_loop(self, ch: ChannelState, window: dict):
+        """Continuous demod + stream for a single channel."""
+        log.info("Listening on %s (%.3f MHz)", ch.name, ch.freq / 1e6)
+
+        try:
+            self.backend.tune(window["center"])
+        except Exception as e:
+            log.error("Tune failed: %s", e)
+            return
+
+        self.state.current_band = window["name"]
+        self.state.current_window_center = window["center"]
+        self.state.current_window_bw = self.backend.get_sample_rate()
+        self.state.sdr_connected = True
+
+        while not self._stop_event.is_set():
+            try:
+                iq = self.backend.read_iq(65536)  # ~27ms chunks
+            except Exception as e:
+                log.error("IQ read failed: %s", e)
+                break
+
+            # FFT for visualization
+            try:
+                from .fft_scan import _compute_power_spectrum
+                self.state.fft_data = _compute_power_spectrum(iq, self.backend.get_sample_rate())
+            except Exception:
+                pass
+
+            # Demod and stream audio
+            audio = demod_channel(iq, self.backend.get_sample_rate(),
+                                  window["center"], ch.freq, ch.bandwidth)
+            audio_bytes = audio.tobytes()
+
+            if self.broadcaster:
+                self.broadcaster.push_audio(audio_bytes)
+
+            # Voice detection
+            detection, confidence = self._process_audio_frames(audio)
+            self.state.current_detection = detection.value
+            self.state.current_confidence = confidence
+            self.state.current_smeter = float(np.max(np.abs(audio))) / 32768.0 * 100  # rough level
+
+        log.info("Stopped listening on %s", ch.name)
+
+    def stop_listening(self):
+        """Stop listening mode."""
+        self._stop_event.set()
+        if self._listen_thread and self._listen_thread.is_alive():
+            self._listen_thread.join(timeout=2)
+        self.state.current_detection = "pending"
 
     def _log_activity(self, event_type: str, ch: ChannelState, power: float = 0, **kwargs):
         """Append an event to the activity log."""
