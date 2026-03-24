@@ -61,6 +61,9 @@ class ScannerState:
     scan_cycle_time: float = 0.0
     sdr_source: str = ""
     auto_discover: bool = False
+    current_window_center: int = 0      # Hz, center of current FFT window
+    current_window_bw: int = 2_400_000  # Hz, bandwidth of current window
+    fft_data: list = field(default_factory=list)  # power spectrum for current window
 
 
 class Scanner:
@@ -97,10 +100,12 @@ class Scanner:
             )
 
     def add_channel(self, freq: int, name: str = "", group: str = "Discovered",
-                    mod: str = "nfm", bandwidth: int = 12500) -> ChannelState:
-        """Add a new channel. If no name, generate one from frequency."""
+                    mod: str = "nfm", bandwidth: int = 12500) -> ChannelState | None:
+        """Add a new channel. Returns None if freq already exists."""
+        if freq in self.state.channels:
+            return None  # Already exists
         if not name:
-            name = f"{freq/1e6:.4f} MHz"
+            name = f"{freq / 1e6:.4f} MHz"
         ch = ChannelState(freq=freq, name=name, mod=mod, group=group, bandwidth=bandwidth)
         self.state.channels[freq] = ch
         return ch
@@ -186,6 +191,8 @@ class Scanner:
 
                 self.state.current_band = window["name"]
                 self.state.sdr_connected = True
+                self.state.current_window_center = window["center"]
+                self.state.current_window_bw = self.backend.get_sample_rate()
                 time.sleep(0.05)  # settling time after retune
 
                 # Read IQ and FFT scan all channels in this window
@@ -204,6 +211,14 @@ class Scanner:
                     [ch.bandwidth for ch in window_channels],
                 )
 
+                # Store FFT data for visualization (downsampled to ~512 points)
+                try:
+                    from .fft_scan import _compute_power_spectrum
+                    fft_power_db = _compute_power_spectrum(iq, self.backend.get_sample_rate())
+                    self.state.fft_data = fft_power_db
+                except Exception:
+                    pass
+
                 # Update S-meter for all channels
                 for ch in window_channels:
                     if ch.freq in powers:
@@ -212,14 +227,15 @@ class Scanner:
 
                 # Auto-discover unknown signals
                 if self.state.auto_discover:
-                    known = [ch.freq for ch in window_channels]
+                    known = list(self.state.channels.keys())  # ALL known freqs, not just window
                     peaks = find_peaks(iq, self.backend.get_sample_rate(),
                                        window["center"], self.state.squelch_level,
                                        known_freqs=known)
                     for peak in peaks:
-                        self.add_channel(peak["freq"], group=window["name"])
-                        log.info("Auto-discovered signal at %.4f MHz (%.1f dB)",
-                                 peak["freq"]/1e6, peak["power_db"])
+                        added = self.add_channel(peak["freq"], group=window["name"])
+                        if added:
+                            log.info("Auto-discovered signal at %.4f MHz (%.1f dB)",
+                                     peak["freq"]/1e6, peak["power_db"])
 
                 # Check for active signals
                 for ch in window_channels:
@@ -248,6 +264,10 @@ class Scanner:
                             iq, self.backend.get_sample_rate(),
                             window["center"], ch.freq, ch.bandwidth,
                         )
+
+                        # Stream audio while analyzing (user can hear what's being checked)
+                        if self.broadcaster:
+                            self.broadcaster.push_audio(audio.tobytes())
 
                         voice_found = self._analyze_audio(ch, audio)
                         if voice_found:
@@ -466,6 +486,11 @@ class Scanner:
             "scan_cycle_time": round(self.state.scan_cycle_time, 2),
             "sdr_source": self.state.sdr_source,
             "auto_discover": self.state.auto_discover,
+            "current_window_center": self.state.current_window_center,
+            "current_window_bw": self.state.current_window_bw,
+            "current_window_lo_mhz": f"{(self.state.current_window_center - self.state.current_window_bw // 2) / 1e6:.3f}" if self.state.current_window_center else "",
+            "current_window_hi_mhz": f"{(self.state.current_window_center + self.state.current_window_bw // 2) / 1e6:.3f}" if self.state.current_window_center else "",
+            "fft_data": self.state.fft_data,
         }
 
     def shutdown(self):

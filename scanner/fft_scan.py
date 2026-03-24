@@ -13,6 +13,58 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def _compute_power_spectrum(
+    iq: np.ndarray,
+    sample_rate: int,
+    fft_size: int = 4096,
+    target_bins: int = 512,
+) -> list[float]:
+    """Compute a downsampled power spectrum (in dB) for visualization.
+
+    Args:
+        iq: Complex64 IQ samples.
+        sample_rate: Sample rate in Hz.
+        fft_size: FFT size per segment.
+        target_bins: Approximate number of output bins.
+
+    Returns:
+        List of floats (power in dB), length <= target_bins, ordered
+        from lowest to highest frequency in the window.
+    """
+    n_samples = len(iq)
+    if n_samples < fft_size:
+        fft_size = n_samples
+
+    n_segments = max(1, n_samples // fft_size)
+
+    window = np.hanning(fft_size).astype(np.float32)
+    window_power = np.mean(window**2)
+
+    power_spectrum = np.zeros(fft_size, dtype=np.float64)
+    for i in range(n_segments):
+        segment = iq[i * fft_size : (i + 1) * fft_size]
+        windowed = segment * window
+        spectrum = np.fft.fft(windowed)
+        power_spectrum += np.abs(spectrum) ** 2
+
+    power_spectrum /= n_segments * window_power
+
+    # Shift so DC is in the center (low freq -> high freq)
+    power_spectrum = np.fft.fftshift(power_spectrum)
+
+    # Convert to dB
+    with np.errstate(divide="ignore"):
+        power_db = 10.0 * np.log10(np.maximum(power_spectrum, 1e-20))
+
+    # Downsample by averaging adjacent bins
+    if fft_size > target_bins:
+        factor = fft_size // target_bins
+        trimmed = power_db[: factor * target_bins]
+        power_db = trimmed.reshape(target_bins, factor).mean(axis=1)
+
+    return [round(float(v), 1) for v in power_db]
+
+
 def compute_channel_power(
     iq: np.ndarray,
     sample_rate: int,
@@ -221,6 +273,58 @@ def find_peaks(
 
     logger.debug("find_peaks: %d unknown peaks found", len(peaks))
     return peaks
+
+
+def compute_power_spectrum(
+    iq: np.ndarray,
+    sample_rate: int,
+    num_bins: int = 512,
+    fft_size: int = 4096,
+) -> list[float]:
+    """Compute averaged power spectrum downsampled to num_bins points.
+
+    Returns a list of power values in dB, suitable for dashboard FFT display.
+    The bins span from (center - sample_rate/2) to (center + sample_rate/2).
+    The output is FFT-shifted so bin 0 = lowest frequency.
+    """
+    n_samples = len(iq)
+    if n_samples < fft_size:
+        fft_size = n_samples
+
+    n_segments = max(1, n_samples // fft_size)
+
+    # Apply Hann window and accumulate power spectra
+    window = np.hanning(fft_size).astype(np.float32)
+    window_power = np.mean(window**2)
+
+    power_spectrum = np.zeros(fft_size, dtype=np.float64)
+    for i in range(n_segments):
+        segment = iq[i * fft_size : (i + 1) * fft_size]
+        windowed = segment * window
+        spectrum = np.fft.fft(windowed)
+        power_spectrum += np.abs(spectrum) ** 2
+
+    power_spectrum /= n_segments * window_power
+
+    # FFT-shift: move DC to center, negative freqs on left
+    power_spectrum = np.fft.fftshift(power_spectrum)
+
+    # Convert to dB
+    with np.errstate(divide="ignore"):
+        power_db = 10.0 * np.log10(np.maximum(power_spectrum, 1e-20))
+
+    # Downsample to num_bins by averaging groups of bins
+    if num_bins >= fft_size:
+        result = power_db
+    else:
+        # Trim to exact multiple of num_bins for even grouping
+        usable = (fft_size // num_bins) * num_bins
+        offset = (fft_size - usable) // 2
+        trimmed = power_db[offset : offset + usable]
+        group_size = usable // num_bins
+        result = trimmed.reshape(num_bins, group_size).mean(axis=1)
+
+    return [round(float(v), 1) for v in result]
 
 
 def find_active_channels(

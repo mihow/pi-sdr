@@ -280,6 +280,17 @@ body {
 .band-card .band-signals { color: #0a0; font-size: 11px; }
 .ch-name { cursor: pointer; }
 .ch-name:hover { text-decoration: underline; color: #fff; }
+#scan-window { font-family: monospace; color: #888; }
+.fft-section {
+  padding: 8px 16px;
+  background: #0a0a0a;
+  border-bottom: 1px solid #222;
+}
+#fft-canvas {
+  width: 100%;
+  height: 120px;
+  display: block;
+}
 </style>
 </head>
 <body>
@@ -296,6 +307,7 @@ body {
     <span id="current-band"></span>
     <span id="scan-progress"></span>
     <span id="cycle-time"></span>
+    <span id="scan-window"></span>
     <span id="dwell-timer" style="display:none"></span>
   </div>
 </div>
@@ -323,6 +335,10 @@ body {
 </div>
 
 <div class="band-overview" id="band-overview"></div>
+
+<div class="fft-section">
+  <canvas id="fft-canvas" width="800" height="120"></canvas>
+</div>
 
 <div class="group-filter" id="group-filter"></div>
 
@@ -554,6 +570,14 @@ function updateHeader() {
   // SDR source
   document.getElementById('sdr-source').textContent = state.sdr_source || '';
 
+  // Scanning window
+  const sw = document.getElementById('scan-window');
+  if (state.current_window_lo_mhz && state.current_window_hi_mhz) {
+    sw.textContent = state.current_window_lo_mhz + ' - ' + state.current_window_hi_mhz + ' MHz';
+  } else {
+    sw.textContent = '';
+  }
+
   // Auto-discover button
   const discBtn = document.getElementById('btn-discover');
   if (discBtn) {
@@ -626,11 +650,114 @@ function renderBands() {
   }).join('');
 }
 
+function renderFFT() {
+  const canvas = document.getElementById('fft-canvas');
+  if (!canvas || !state.fft_data || state.fft_data.length === 0) return;
+
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.clientWidth;
+  canvas.height = 120;
+  const data = state.fft_data;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Clear
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, w, h);
+
+  // Draw grid lines
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i < 5; i++) {
+    const y = (i / 4) * h;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+
+  // Find data range for scaling
+  const minDb = -80;
+  const maxDb = Math.max(...data, -20);
+  const squelch = state.squelch_level || -45;
+
+  // Draw squelch line
+  const squelchY = h - ((squelch - minDb) / (maxDb - minDb)) * h;
+  ctx.strokeStyle = '#a00';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(0, squelchY);
+  ctx.lineTo(w, squelchY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Draw spectrum
+  ctx.beginPath();
+  ctx.strokeStyle = '#0f0';
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < data.length; i++) {
+    const x = (i / data.length) * w;
+    const db = Math.max(data[i], minDb);
+    const y = h - ((db - minDb) / (maxDb - minDb)) * h;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Fill below the line with gradient
+  ctx.lineTo(w, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
+  ctx.fill();
+
+  // Draw channel markers if we know the window
+  if (state.current_window_center && state.current_window_bw && state.channels) {
+    const loFreq = state.current_window_center - state.current_window_bw / 2;
+    const hiFreq = state.current_window_center + state.current_window_bw / 2;
+
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+
+    state.channels.forEach(ch => {
+      if (ch.freq >= loFreq && ch.freq <= hiFreq) {
+        const x = ((ch.freq - loFreq) / (hiFreq - loFreq)) * w;
+
+        // Marker line
+        ctx.strokeStyle = ch.active ? '#0f0' : '#444';
+        ctx.lineWidth = ch.active ? 2 : 0.5;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+
+        // Label (only if active or has signal)
+        if (ch.active || ch.signal_count > 0) {
+          ctx.fillStyle = ch.active ? '#0f0' : '#888';
+          ctx.fillText(ch.name, x, 10);
+        }
+      }
+    });
+  }
+
+  // Window frequency labels
+  if (state.current_window_lo_mhz && state.current_window_hi_mhz) {
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#666';
+    ctx.textAlign = 'left';
+    ctx.fillText(state.current_window_lo_mhz + ' MHz', 4, h - 4);
+    ctx.textAlign = 'right';
+    ctx.fillText(state.current_window_hi_mhz + ' MHz', w - 4, h - 4);
+  }
+}
+
 async function poll() {
   try {
     state = await api('/state');
     updateHeader();
     renderBands();
+    renderFFT();
     renderChannels();
     renderActivity();
     // Only render groups on first load
