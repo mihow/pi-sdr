@@ -380,7 +380,7 @@ body {
     <option value="freq">Frequency</option>
     <option value="recent">Recent Activity</option>
     <option value="signal">Most Signals</option>
-    <option value="voice">Most Voice</option>
+    <option value="voice" selected>Most Voice</option>
     <option value="name">Name</option>
   </select>
 </div>
@@ -395,7 +395,7 @@ body {
 <script>
 let state = {};
 let activeGroup = "all";
-let sortMode = "freq";
+let sortMode = "voice";
 let pollInterval;
 let lastPollOk = false;
 let pollFailCount = 0;
