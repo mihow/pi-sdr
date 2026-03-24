@@ -48,7 +48,24 @@ body {
   z-index: 100;
   border-bottom: 2px solid #333;
 }
-.header h1 { font-size: 18px; margin-bottom: 8px; }
+.header h1 { font-size: 18px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.sdr-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a00;
+}
+.status-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: #aaa;
+  margin-top: 4px;
+}
+.status-detail span { white-space: nowrap; }
+#dwell-timer { color: #0f0; font-weight: bold; }
 .status-bar {
   display: flex;
   flex-wrap: wrap;
@@ -178,17 +195,56 @@ body {
   border-radius: 4px;
   transition: width 0.3s;
 }
+.activity-section { padding: 0 16px 8px; }
+.activity-toggle {
+  width: 100%;
+  padding: 6px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1a1a1a;
+  color: #aaa;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.activity-toggle:active { background: #222; }
+.activity-log {
+  max-height: 200px;
+  overflow-y: auto;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 4px;
+  margin-top: 4px;
+  padding: 4px;
+  font-family: monospace;
+  font-size: 11px;
+}
+.activity-entry {
+  padding: 2px 6px;
+  border-bottom: 1px solid #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.act-voice { color: #0f0; }
+.act-signal { color: #cc0; }
 </style>
 </head>
 <body>
 <div class="header">
-  <h1>Radio Scanner</h1>
+  <h1><span class="sdr-dot" id="sdr-dot"></span>Radio Scanner</h1>
   <div class="status-bar">
     <span class="freq" id="current-freq">---</span>
     <span id="current-name"></span>
     <span class="smeter" id="current-smeter">S--</span>
     <span class="badge badge-pending" id="detection-badge">--</span>
     <span class="badge" id="scan-badge">--</span>
+  </div>
+  <div class="status-detail">
+    <span id="current-band"></span>
+    <span id="scan-progress"></span>
+    <span id="cycle-time"></span>
+    <span id="dwell-timer" style="display:none"></span>
   </div>
 </div>
 
@@ -205,6 +261,11 @@ body {
 </div>
 
 <div class="group-filter" id="group-filter"></div>
+
+<div class="activity-section">
+  <button class="activity-toggle" onclick="toggleActivity()">Activity Log</button>
+  <div class="activity-log" id="activity-log" style="display:none"></div>
+</div>
 
 <div class="channel-list" id="channel-list"></div>
 
@@ -320,6 +381,52 @@ function updateHeader() {
 
   document.getElementById('squelch').value = state.squelch_level || -60;
   document.getElementById('squelch-val').textContent = (state.squelch_level || -60) + ' dB';
+
+  // SDR dot
+  const dot = document.getElementById('sdr-dot');
+  dot.style.background = state.sdr_connected ? '#0a0' : '#a00';
+
+  // Band
+  document.getElementById('current-band').textContent =
+    state.current_band ? 'Band: ' + state.current_band : '';
+
+  // Progress
+  document.getElementById('scan-progress').textContent =
+    state.scanning ? (state.scan_index || 0) + '/' + (state.scan_total || 0) + ' channels' : '';
+
+  // Cycle time
+  document.getElementById('cycle-time').textContent =
+    state.scan_cycle_time ? 'Cycle: ' + state.scan_cycle_time.toFixed(1) + 's' : '';
+
+  // Dwell timer
+  const dwell = document.getElementById('dwell-timer');
+  if (state.paused_on_voice && state.channel_dwell_elapsed) {
+    dwell.textContent = 'Holding: ' + state.channel_dwell_elapsed.toFixed(1) + 's';
+    dwell.style.display = '';
+  } else {
+    dwell.style.display = 'none';
+  }
+}
+
+function toggleActivity() {
+  const el = document.getElementById('activity-log');
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+  if (el.style.display !== 'none') renderActivity();
+}
+
+function renderActivity() {
+  const log = state.activity_log || [];
+  const el = document.getElementById('activity-log');
+  if (!el || el.style.display === 'none') return;
+  el.innerHTML = log.slice().reverse().map(e => {
+    const ts = e.ts ? e.ts.split('T')[1].split('.')[0] : '';
+    const cls = e.type === 'voice' ? 'act-voice' : 'act-signal';
+    const freq = (e.freq / 1e6).toFixed(4);
+    const detail = e.type === 'voice' ?
+      (e.duration ? e.duration.toFixed(1) + 's' : '') :
+      (e.power ? e.power + ' dB' : '');
+    return `<div class="activity-entry ${cls}">${ts} ${e.type.toUpperCase()} ${e.channel} ${freq} MHz ${detail}</div>`;
+  }).join('');
 }
 
 async function poll() {
@@ -327,6 +434,7 @@ async function poll() {
     state = await api('/state');
     updateHeader();
     renderChannels();
+    renderActivity();
     // Only render groups on first load
     if (!document.querySelector('.group-filter button')) renderGroups();
   } catch(e) {
@@ -368,6 +476,11 @@ def stop_scan():
 def toggle_skip(freq: int):
     new_state = scanner.toggle_skip(freq)
     return jsonify({"ok": True, "skip": new_state})
+
+
+@app.route("/api/activity")
+def get_activity():
+    return jsonify(list(scanner.state.activity_log))
 
 
 @app.route("/api/squelch", methods=["POST"])
