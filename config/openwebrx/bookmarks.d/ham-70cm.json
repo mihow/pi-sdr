@@ -1,0 +1,22 @@
+[
+  {
+    "name": "446.000 (National Simplex)",
+    "frequency": 446000000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "446.500 (Simplex)",
+    "frequency": 446500000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "446.100 (Simplex)",
+    "frequency": 446100000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "449.950 (Simplex)",
+    "frequency": 449950000,
+    "modulation": "nfm"
+  }
+]

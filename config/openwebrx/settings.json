@@ -1,0 +1,104 @@
+{
+    "version": 7,
+    "sdrs": {
+        "rtlsdr": {
+            "name": "RTL-SDR Blog V4",
+            "type": "rtl_sdr",
+            "profiles": {
+                "fm-broadcast": {
+                    "name": "FM Broadcast",
+                    "center_freq": 97500000,
+                    "samp_rate": 2400000,
+                    "start_freq": 97500000,
+                    "start_mod": "wfm",
+                    "rf_gain": 29
+                },
+                "noaa-weather": {
+                    "name": "NOAA Weather",
+                    "center_freq": 162475000,
+                    "samp_rate": 2400000,
+                    "start_freq": 162400000,
+                    "start_mod": "nfm",
+                    "rf_gain": 29
+                },
+                "2m": {
+                    "name": "2m Ham",
+                    "center_freq": 146000000,
+                    "samp_rate": 2400000,
+                    "start_freq": 146520000,
+                    "start_mod": "nfm",
+                    "rf_gain": 29
+                },
+                "70cm": {
+                    "name": "70cm Ham",
+                    "center_freq": 446000000,
+                    "samp_rate": 2400000,
+                    "start_freq": 446000000,
+                    "start_mod": "nfm",
+                    "rf_gain": 29
+                },
+                "gmrs": {
+                    "name": "GMRS/FRS",
+                    "center_freq": 462562500,
+                    "samp_rate": 2400000,
+                    "start_freq": 462562500,
+                    "start_mod": "nfm",
+                    "rf_gain": 29
+                },
+                "airband": {
+                    "name": "Air Band",
+                    "center_freq": 122500000,
+                    "samp_rate": 2400000,
+                    "start_freq": 121500000,
+                    "start_mod": "am",
+                    "rf_gain": 29
+                },
+                "marine": {
+                    "name": "Marine VHF",
+                    "center_freq": 157000000,
+                    "samp_rate": 2400000,
+                    "start_freq": 156800000,
+                    "start_mod": "nfm",
+                    "rf_gain": 29
+                },
+                "aprs": {
+                    "name": "APRS",
+                    "center_freq": 144500000,
+                    "samp_rate": 2400000,
+                    "start_freq": 144390000,
+                    "start_mod": "packet",
+                    "rf_gain": 29
+                }
+            }
+        }
+    },
+    "receiver_name": "pi-sdr",
+    "receiver_location": "",
+    "receiver_asl": 0,
+    "receiver_admin": "",
+    "receiver_gps": {
+        "lat": 0,
+        "lon": 0
+    },
+    "max_clients": 10,
+    "waterfall_scheme": "GoogleTurboWaterfall",
+    "fft_fps": 9,
+    "fft_size": 4096,
+    "fft_voverlap_factor": 0.3,
+    "waterfall_levels": {
+        "min": -88.0,
+        "max": -20.0
+    },
+    "audio_compression": "adpcm",
+    "fft_compression": "adpcm",
+    "squelch_auto_margin": 10,
+    "digital_voice_dmr_id_lookup": true,
+    "digital_voice_nxdn_id_lookup": true,
+    "decoding_queue_workers": 2,
+    "decoding_queue_length": 10,
+    "wsjt_decoding_depth": 3,
+    "js8_enabled_profiles": ["normal", "slow"],
+    "fst4_enabled_intervals": [15, 30],
+    "fst4w_enabled_intervals": [120, 300],
+    "q65_enabled_combinations": ["A30", "E120"]
+}

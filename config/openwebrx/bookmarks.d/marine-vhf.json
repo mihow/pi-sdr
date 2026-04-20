@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Marine VHF 16 (Distress)",
+    "frequency": 156800000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "Marine VHF 9 (Calling)",
+    "frequency": 156450000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "Marine VHF 13 (Bridge-to-Bridge)",
+    "frequency": 156650000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "Marine VHF 6 (Safety)",
+    "frequency": 156300000,
+    "modulation": "nfm"
+  },
+  {
+    "name": "Marine VHF 22A (Coast Guard)",
+    "frequency": 157100000,
+    "modulation": "nfm"
+  }
+]

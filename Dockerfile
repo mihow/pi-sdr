@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     kpartx \
     udev \
     curl \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build

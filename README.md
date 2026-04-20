@@ -1,6 +1,6 @@
 # pi-sdr
 
-Minimal Raspberry Pi 5 image builder for Software-Defined Radio. Produces a flashable `.img.xz` with RTL-SDR V4 drivers, SoapySDR, and Tailscale pre-installed. No audio stack, no scanner config — just the SDR foundation.
+Raspberry Pi 5 SDR image builder with a web-based receiver. Produces a flashable `.img.xz` with OpenWebRX+, RTL-SDR V4 drivers, digital mode decoders, and Tailscale. Boot it, open a browser, tune the waterfall.
 
 ## Prerequisites
 
@@ -48,13 +48,58 @@ Pre-built images are available from the [latest release](../../releases/latest).
 | Component | Version | Notes |
 |-----------|---------|-------|
 | Raspberry Pi OS | Trixie arm64 lite | Debian 13, pinned 2025-12-04 |
+| OpenWebRX+ | latest | Web-based SDR receiver with waterfall and decoders |
 | rtl-sdr | 2.0.2 | RTL-SDR Blog V4 support (packaged, no source build) |
 | SoapySDR | 0.8.1 | Universal SDR API |
-| SoapyRTLSDR | 0.3.3 | SoapySDR driver for RTL-SDR |
-| python3-soapysdr | 0.8.1 | `import SoapySDR` works out of the box |
 | Tailscale | latest stable | Remote access without port forwarding |
+| codec2 | — | FreeDV, digital voice codec |
+| direwolf | — | APRS/AX.25 packet decoding |
+| wsjtx | — | FT8, FT4, JT65, WSPR, Q65 weak signal modes |
+| m17-demod | — | M17 digital voice |
+| multimon-ng | — | POCSAG paging, EAS, DTMF, and more |
 
-Also includes: DVB kernel module blacklist, udev rules (from `librtlsdr` package), test scripts at `/usr/local/bin/`.
+Also includes: DVB kernel module blacklist, udev rules, frequency bookmarks for US radio services, test scripts at `/usr/local/bin/`.
+
+## Web UI (OpenWebRX+)
+
+OpenWebRX+ runs as a Docker container on the Pi (the Bookworm apt packages aren't compatible with Trixie's Python 3.13). On first boot, the container image pulls automatically (~1 GB download). After that, it starts on port 8073:
+
+- **Local network:** `http://<pi-ip>:8073`
+- **Via Tailscale:** `http://<pi-tailscale-name>:8073`
+
+Anyone on the network can tune and listen. The admin panel (settings, bookmarks) requires login.
+
+### First-time setup
+
+1. Log in to the admin panel at `http://<pi-ip>:8073/settings`
+2. Set your receiver name, location, and GPS coordinates
+3. Adjust RTL-SDR gain for your antenna and environment
+4. Add local repeater frequencies to bookmarks
+
+If you set `OPENWEBRX_ADMIN_PASSWORD` in `.env` before building, the admin user is pre-created. Otherwise create one via SSH:
+
+```bash
+docker exec -it openwebrx openwebrx admin adduser admin
+```
+
+Config files live at `/opt/openwebrx/` on the Pi and are volume-mounted into the container.
+
+### Pre-configured band profiles
+
+| Profile | Frequency range | Modulation |
+|---------|----------------|------------|
+| FM Broadcast | 88–108 MHz | WFM |
+| NOAA Weather | 162.4–162.55 MHz | NFM |
+| 2m Ham | 144–148 MHz | NFM |
+| 70cm Ham | 420–450 MHz | NFM |
+| GMRS/FRS | 462–467 MHz | NFM |
+| Air Band | 118–137 MHz | AM |
+| Marine VHF | 156–162 MHz | NFM |
+| APRS | 144.39 MHz | Packet |
+
+### Digital modes
+
+FT8/FT4/WSPR/JT65 (wsjtx), APRS (direwolf), DMR/D-STAR/NXDN/P25 (digiham), M17 (m17-demod), POCSAG/FLEX (multimon-ng), FreeDV (codec2), CW, SSTV, AIS, NAVTEX.
 
 ## Testing with a real dongle (no flashing needed)
 
@@ -93,19 +138,32 @@ These are installed to `/usr/local/bin/` on the Pi image:
 
 ## Configuration
 
-Copy `.env.example` to `.env`:
+Copy `.env.example` to `.env` and fill in what you need. All variables are optional — the image works without any of them, but some features require manual setup on the Pi instead.
 
 ```bash
-# WiFi (optional — leave blank for ethernet only)
+# WiFi (optional)
 WIFI_SSID=MyNetwork
 WIFI_PASSWORD=secret
 WIFI_COUNTRY=US
 
-# Tailscale (optional — authenticate manually on first boot if blank)
+# Tailscale (optional)
 TAILSCALE_AUTHKEY=tskey-auth-...
+
+# OpenWebRX+ admin (optional)
+OPENWEBRX_ADMIN_PASSWORD=changeme
 ```
 
-Build-time options (env vars passed to `docker compose run`):
+### What happens when variables aren't set
+
+| Variable | If blank | Manual setup |
+|----------|----------|--------------|
+| `WIFI_SSID` | No WiFi configured. Pi only works over ethernet. | SSH in and use `nmcli dev wifi connect <SSID> password <pass>` |
+| `TAILSCALE_AUTHKEY` | Tailscale is installed but not authenticated. No remote access until you log in. | SSH in and run `sudo tailscale up` |
+| `OPENWEBRX_ADMIN_PASSWORD` | OpenWebRX+ works for listening (no login needed) but admin settings panel is locked. | SSH in and run `docker exec -it openwebrx openwebrx admin adduser admin` |
+
+Without WiFi or Tailscale, you'll need ethernet + a monitor/keyboard or use Pi Imager's custom settings to enable SSH and set a password for initial access.
+
+### Build-time options
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -116,10 +174,10 @@ Build-time options (env vars passed to `docker compose run`):
 
 1. Docker container (Ubuntu 24.04) with QEMU user-mode emulation
 2. Downloads pinned Raspberry Pi OS Trixie arm64 lite image (cached after first download)
-3. Expands the root partition by 2 GB
+3. Expands the root partition by 5 GB
 4. Mounts via `kpartx` and chroots with QEMU aarch64
-5. `apt install rtl-sdr soapysdr-tools ...` (no source compilation needed — Trixie's rtl-sdr 2.0.2 includes V4 support)
-6. Installs Tailscale, DVB blacklist, WiFi config, test scripts
+5. `apt install rtl-sdr soapysdr-tools openwebrx ...` (no source compilation)
+6. Installs Tailscale, decoders, DVB blacklist, WiFi config, bookmarks, test scripts
 7. Cleans up and compresses to `.img.xz`
 
 To rebuild, remove the output image and re-run. The downloaded base image is cached:
@@ -144,12 +202,9 @@ GitHub Actions builds and publishes `.img.xz` to Releases on tag push:
 git tag v0.1.0 && git push --tags
 ```
 
-## Downstream projects
+## Related projects
 
-This image is a foundation. Install additional software on top:
-
-- [OpenWebRX+](https://www.openwebrx.de/) — web-based SDR receiver with waterfall
-- [trunk-recorder](https://github.com/robotastic/trunk-recorder) — trunked radio system recorder
-- [rtl_airband](https://github.com/rtl-airband/RTLSDR-Airband) — aviation scanner
 - [signal-logs](https://github.com/mihow/signal-logs) — passive radio monitoring with AI-powered transcription and summarization
 - [pi-radio-station](https://github.com/mihow/pi-radio-station) — full monitoring station with audio mixing
+- [trunk-recorder](https://github.com/robotastic/trunk-recorder) — trunked radio system recorder
+- [OpenWebRX+](https://www.openwebrx.de/) — the web SDR receiver included in this image

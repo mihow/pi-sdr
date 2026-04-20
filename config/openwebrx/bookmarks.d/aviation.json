@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Aviation Emergency (121.500)",
+    "frequency": 121500000,
+    "modulation": "am"
+  },
+  {
+    "name": "Air-to-Air (122.750)",
+    "frequency": 122750000,
+    "modulation": "am"
+  },
+  {
+    "name": "Helicopter (123.025)",
+    "frequency": 123025000,
+    "modulation": "am"
+  },
+  {
+    "name": "Air-to-Air (123.450)",
+    "frequency": 123450000,
+    "modulation": "am"
+  },
+  {
+    "name": "Military Emergency (243.000)",
+    "frequency": 243000000,
+    "modulation": "am"
+  },
+  {
+    "name": "Flight Service (122.000)",
+    "frequency": 122000000,
+    "modulation": "am"
+  }
+]

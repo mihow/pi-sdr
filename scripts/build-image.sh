@@ -26,7 +26,7 @@ IMAGE_DATE="2025-12-04"
 IMAGE_NAME="${IMAGE_DATE}-raspios-trixie-arm64-lite"
 IMAGE_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-${IMAGE_DATE}/${IMAGE_NAME}.img.xz"
 
-EXPAND_GB=2
+EXPAND_GB=5
 COMPRESS="${COMPRESS:-true}"
 
 BUILD_DIR="/build"
@@ -42,6 +42,7 @@ TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-}"
 WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PASSWORD="${WIFI_PASSWORD:-}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
+OPENWEBRX_ADMIN_PASSWORD="${OPENWEBRX_ADMIN_PASSWORD:-}"
 
 # Track state for cleanup
 LOOP_DEV=""
@@ -153,6 +154,8 @@ fi
 # --- Copy to working file, decompress ---
 echo ""
 echo "=== Decompress ==="
+# Clean up any leftover work files from previous failed builds
+rm -f "$IMAGE_WORK" "$IMAGE_WORK.xz"
 echo "Copying to work image..."
 cp "$IMAGE_XZ" "$IMAGE_WORK.xz"
 echo "Decompressing..."
@@ -218,6 +221,16 @@ if [[ -d "${BUILD_DIR}/test-scripts" ]]; then
     cp -r "${BUILD_DIR}/test-scripts/" "${MOUNT_DIR}/opt/provision/test-scripts/"
 fi
 
+# --- Pre-pull OpenWebRX+ Docker image for offline first boot ---
+echo ""
+echo "=== Pre-pull OpenWebRX+ Docker image (arm64) ==="
+OWRX_IMAGE="slechev/openwebrxplus-softmbe:latest"
+mkdir -p "${MOUNT_DIR}/opt/openwebrx"
+docker pull --platform linux/arm64 "$OWRX_IMAGE"
+echo "Saving image to ${MOUNT_DIR}/opt/openwebrx/openwebrxplus-softmbe-arm64.tar ..."
+docker save "$OWRX_IMAGE" > "${MOUNT_DIR}/opt/openwebrx/openwebrxplus-softmbe-arm64.tar"
+echo "Saved ($(du -sh "${MOUNT_DIR}/opt/openwebrx/openwebrxplus-softmbe-arm64.tar" | cut -f1))"
+
 # --- Disable ld.so.preload ---
 echo ""
 echo "=== Disable ld.so.preload ==="
@@ -255,6 +268,58 @@ if [[ -L "${MOUNT_DIR}/etc/resolv.conf" ]]; then
 fi
 cp /etc/resolv.conf "${MOUNT_DIR}/etc/resolv.conf"
 
+# --- Set hostname ---
+echo ""
+echo "=== Set hostname ==="
+echo "pi-sdr" > "${MOUNT_DIR}/etc/hostname"
+sed -i 's/127\.0\.1\.1.*/127.0.1.1\tpi-sdr/' "${MOUNT_DIR}/etc/hosts"
+echo "  Hostname set to pi-sdr"
+
+# --- Enable SSH ---
+echo ""
+echo "=== Enable SSH ==="
+touch "${MOUNT_DIR}/boot/firmware/ssh"
+echo "  Created /boot/firmware/ssh"
+
+# --- Set pi user password ---
+echo ""
+echo "=== Set pi user password ==="
+# Generate hashed password and write to userconf.txt for first-boot user setup.
+# Pi OS Trixie uses this file to set up the default user on first boot.
+PI_PASSWORD="picketfencing"
+PI_HASH=$(openssl passwd -6 "$PI_PASSWORD")
+echo "pi:${PI_HASH}" > "${MOUNT_DIR}/boot/firmware/userconf.txt"
+echo "  Written to /boot/firmware/userconf.txt (pi:picketfencing)"
+
+# --- Network MTU for CGNAT ---
+# T-Mobile and other CGNAT providers have a path MTU of ~1424 but silently
+# drop oversized packets. TLS handshakes (1500+ bytes) fail without this.
+# MSS clamp alone doesn't help — the TLS ClientHello is a single segment.
+echo ""
+echo "=== Set network MTU to 1400 for CGNAT compatibility ==="
+mkdir -p "${MOUNT_DIR}/etc/networkd-dispatcher/routable.d"
+cat > "${MOUNT_DIR}/etc/networkd-dispatcher/routable.d/50-mtu-clamp" << 'MTUFIX'
+#!/bin/sh
+# Set MTU on all physical interfaces for CGNAT compatibility
+for dev in /sys/class/net/eth* /sys/class/net/wlan*; do
+    [ -e "$dev" ] || continue
+    iface=$(basename "$dev")
+    ip link set "$iface" mtu 1400 2>/dev/null || true
+done
+MTUFIX
+chmod +x "${MOUNT_DIR}/etc/networkd-dispatcher/routable.d/50-mtu-clamp"
+echo "  Written to /etc/networkd-dispatcher/routable.d/50-mtu-clamp"
+
+# --- WiFi regulatory domain ---
+# Without a country code, the Pi WiFi radio stays in passive-scan mode
+# and cannot connect to any network.
+echo ""
+echo "=== Set WiFi country: $WIFI_COUNTRY ==="
+cat > "${MOUNT_DIR}/etc/default/crda" << EOF
+REGDOMAIN=${WIFI_COUNTRY}
+EOF
+echo "  Written to /etc/default/crda"
+
 # --- WiFi configuration ---
 if [[ -n "$WIFI_SSID" ]]; then
     echo ""
@@ -270,6 +335,7 @@ autoconnect=true
 [wifi]
 mode=infrastructure
 ssid=${WIFI_SSID}
+mtu=1400
 
 [wifi-security]
 auth-alg=open
@@ -294,6 +360,7 @@ CHROOT_ENV=(
     "PATH=/usr/sbin:/usr/bin:/sbin:/bin"
 )
 [[ -n "$TAILSCALE_AUTHKEY" ]] && CHROOT_ENV+=("TAILSCALE_AUTHKEY=${TAILSCALE_AUTHKEY}")
+[[ -n "${OPENWEBRX_ADMIN_PASSWORD:-}" ]] && CHROOT_ENV+=("OPENWEBRX_ADMIN_PASSWORD=${OPENWEBRX_ADMIN_PASSWORD}")
 
 # --- Run provision.sh in chroot ---
 echo ""

@@ -20,8 +20,10 @@ services:
       - WIFI_SSID
       - WIFI_PASSWORD
       - WIFI_COUNTRY
+      - OPENWEBRX_ADMIN_PASSWORD
     volumes:
       - ./data:/build/data
       - ./scripts:/build/scripts
       - ./config:/build/config
       - ./test-scripts:/build/test-scripts
+      - /var/run/docker.sock:/var/run/docker.sock

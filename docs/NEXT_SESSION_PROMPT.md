@@ -1,100 +1,127 @@
-# pi-sdr — Implementation Planning Prompt
+# pi-sdr — Next Session Context
 
-## Context
+## What was accomplished
 
-This is a new, clean repo for building minimal Raspberry Pi 5 SDR images. It's a stripped-down version of [pi-radio-monitoring-research](https://github.com/mihow/pi-radio-monitoring-research) — SDR drivers + Tailscale only, no audio stack.
+Built a complete Raspberry Pi 5 SDR image builder with OpenWebRX+ web receiver. The system is Docker-based, cross-compiles for arm64 via QEMU, and produces a flashable `.img.xz`.
 
-The prior repo validated the Docker/QEMU image build pipeline with Bookworm. This project moves to **Trixie** and simplifies: Trixie's `rtl-sdr` 2.0.2 package includes V4 support, so we may not need the custom Blog fork compile.
+### v0.1.0 released (base image, no OpenWebRX+)
+- RTL-SDR V4 validated with Trixie's packaged rtl-sdr 2.0.2 (no source compile needed)
+- SoapySDR + Python bindings
+- Tailscale with optional first-boot auth
+- WiFi via NetworkManager keyfile
+- DVB blacklist, test scripts (check-sdr.sh, tune.sh, scan.sh)
+- GitHub Release: https://github.com/mihow/pi-sdr/releases/tag/v0.1.0
 
-## Goal
+### feat/openwebrx branch (PR #1)
+- OpenWebRX+ runs as Docker container (`slechev/openwebrxplus-softmbe`) — native apt install fails because Bookworm's `python3-csdr` requires Python < 3.12 but Trixie ships 3.13
+- Docker CE installed in the Pi image via apt
+- OpenWebRX+ Docker image (1.1 GB) pre-saved into Pi filesystem for offline first boot
+- 8 RTL-SDR V4 band profiles: FM Broadcast, NOAA Weather, 2m Ham, 70cm Ham, GMRS/FRS, Air Band, Marine VHF, APRS
+- 9 frequency bookmark files (public US FCC/ITU allocations)
+- Auto HTTPS cert generation via Tailscale on first boot (browsers require HTTPS for web audio)
+- Admin user: admin / picketfencing
+- PR: https://github.com/mihow/pi-sdr/pull/1
 
-Build a working Docker-based image builder that produces a flashable `.img.xz` for Raspberry Pi 5 with:
-- RTL-SDR V4 drivers (test Trixie's packaged rtl-sdr 2.0.2 first, fall back to Blog fork if needed)
-- SoapySDR + SoapyRTLSDR + Python 3 bindings
-- Tailscale (pre-installed, optional first-boot auth via env var)
-- WiFi config via .env
-- DVB kernel module blacklist
-- Test scripts: `test-with-usb.sh` (Docker chroot with USB passthrough), `tune.sh` (tune to freq, record IQ), basic connectivity check
-- Compressed `.img.xz` output
-- GitHub Actions workflow to build + publish to Releases on tag push
+### Validated
+- OpenWebRX+ v1.2.96 running on beast with V4 dongle — waterfall + audio working via HTTPS + Tailscale cert
+- All 8 band profiles working, all digital modes available in UI
+- Audio confirmed working in Firefox (Chrome had issues — possibly a plugin conflict on user's machine)
+- Tailscale container test: `pi-sdr-test` got its own Tailscale identity, generated a real cert, audio worked at `https://pi-sdr-test.wirehair-yo.ts.net:8073`
 
-## Key decisions to validate
+### Image patching workflow
+Developed a fast patching approach — mount the raw .img via kpartx in a Docker container and write files directly. No full rebuild needed for WiFi, Tailscale key, SSH, hostname changes. Used this to patch:
+- WiFi: ShinyObject / doingeasy
+- Tailscale: reusable key
+- SSH: pi / picketfencing
+- Hostname: pi-sdr
 
-1. **Does Trixie's packaged rtl-sdr 2.0.2 work with RTL-SDR Blog V4?**
-   - Test: `apt install rtl-sdr` in a Trixie chroot, then `rtl_test -t` with a V4 dongle
-   - If yes: skip the custom compile entirely, massive simplification
-   - If no: compile the Blog fork like before
+## Current state
 
-2. **Does Trixie's packaged SoapySDR work with the packaged rtl-sdr?**
-   - Test: `apt install soapysdr-module-rtlsdr soapysdr-tools python3-soapysdr`
-   - Verify: `SoapySDRUtil --find` detects the dongle, `python3 -c "import SoapySDR"` works
+### Branches
+- `main` — v0.1.0 base image (no OpenWebRX+)
+- `feat/openwebrx` — OpenWebRX+ integration, PR #1 open
 
-3. **Pin a Trixie image date**
-   - Find the latest Pi OS Trixie lite arm64 image URL at raspberrypi.com
-   - Pin it in build-image.sh like we did with Bookworm (2025-05-13)
+### Built images in data/
+- Full rebuild in progress (COMPRESS=false) with SSH + SSL changes baked in
+- Previous image deleted — was built before SSH/SSL fixes
 
-## What to reuse from pi-radio-monitoring-research
+### Docker E2E test validated
+- Tailscale auth, HTTPS cert (Let's Encrypt), SSH with password, OpenWebRX+ waterfall + audio all working
+- Test compose: `docker-compose.test.yml` (Tailscale sidecar + OpenWebRX+ sharing network)
+- HTTPS cert needs retry on first boot — ACME auth can lag on new hostnames (entrypoint retries 3x)
 
-Copy and adapt (don't copy verbatim — simplify for Trixie):
-- `Dockerfile` — build container with host tools (qemu, parted, kpartx)
-- `docker-compose.yml` — binfmt registration + build service
-- `scripts/build-image.sh` — download, resize, mount, chroot, unmount
-- `scripts/provision.sh` — SIMPLIFIED: just apt install + Tailscale + blacklist, no cmake builds if packaged versions work
-- `scripts/test-with-usb.sh` — Docker chroot with USB passthrough
-- `config/system/blacklist-sdr.conf` — DVB module blacklist
+### Stale Tailscale nodes to clean up
+- Delete from https://login.tailscale.com/admin/machines:
+  - pi-sdr-test, pi-sdr-test-1, pi-sdr-test-2, pi-sdr-test-3 (test containers)
+  - pi-sdr (100.85.90.10, old Pi attempt)
 
-DO NOT copy:
-- Anything audio-related (PipeWire, WirePlumber, shairport-sync, duck-daemon, espeak-ng)
-- rtl_airband config and service
-- Audio test scripts
-- WirePlumber config files
+## What needs to happen next
 
-## New things to add
+### Immediate
+1. **Wait for rebuild to finish** — verify SSH and SSL are baked in
+2. **E2E test the new image** in Docker before flashing
+3. **Flash to Pi** and verify first-boot: SSH, Tailscale, OpenWebRX+, audio
+4. **Merge PR #1** once Pi test passes
 
-- `.env.example` with documented variables
-- `test-scripts/tune.sh` — tune to a frequency, record IQ samples, print signal info
-- `test-scripts/scan.sh` — quick scan across a frequency range, report active signals
-- GitHub Actions workflow (`.github/workflows/build.yml`) for CI/CD
-- Proper `.gitignore` (data/, *.img, *.img.xz)
+### Build improvements to add
+- Add a `scripts/patch-image.sh` script to make the manual patching workflow reusable
+- Consider whether the `COMPRESS` env var should default to `false` for dev and only compress in CI
 
-## Build pipeline (simplified for Trixie)
+### Known issues
+- `test-with-usb.sh` Docker re-exec mangles complex shell commands (`bash -c "..."`) — works fine for single commands
+- Chrome audio issue on user's machine (works in Firefox, works in headless Chrome) — likely a browser plugin conflict
+- The `.img.xz` doesn't include patches — need to recompress after patching, or always flash from raw `.img`
+- GitHub Actions `docker pull --platform linux/arm64` for the pre-save step needs the Docker socket mounted — verify this works in CI
 
-1. Download Pi OS Trixie arm64 lite
-2. Resize image (+2GB — less space needed without audio stack)
-3. Loop mount via kpartx
-4. Chroot with QEMU user-mode
-5. `apt update && apt install rtl-sdr soapysdr-tools soapysdr-module-rtlsdr python3-soapysdr`
-6. If V4 doesn't work with packaged rtl-sdr: compile Blog fork
-7. Install Tailscale from official repo
-8. Deploy blacklist, WiFi config, test scripts
-9. Cleanup, unmount, compress to .img.xz
+## Key technical decisions
 
-## Test plan
+| Decision | Rationale |
+|----------|-----------|
+| Trixie not Bookworm | Latest Pi OS, rtl-sdr 2.0.2 with V4 support in apt |
+| OpenWebRX+ via Docker not apt | python3-csdr needs Python < 3.12, Trixie has 3.13 |
+| Pre-save Docker image in Pi filesystem | Offline first boot, no 1GB download needed |
+| HTTPS via Tailscale cert | Browsers block AudioContext on HTTP (no sound without HTTPS) |
+| Reusable Tailscale keys | One-time keys get consumed before first-boot reboot completes |
+| kpartx not losetup -P | Docker doesn't create /dev/loopXpN partition devices |
 
-- [ ] Build completes without errors
-- [ ] Validation checks pass (rtl_test, SoapySDRUtil, python3 import)
-- [ ] `test-with-usb.sh` detects a real V4 dongle
-- [ ] `tune.sh` tunes to a known frequency and captures IQ
-- [ ] Tailscale connects on first boot (if auth key provided)
-- [ ] WiFi connects on first boot (if credentials provided)
-- [ ] Image flashes and boots on a real Pi 5
-- [ ] `.img.xz` is < 1GB compressed
+## Credentials (in .env, gitignored)
 
-## Hardware available
+- WiFi: ShinyObject / doingeasy
+- SSH: pi / picketfencing
+- OpenWebRX admin: admin / picketfencing
+- Tailscale key: tskey-auth-k4eaQAY5cM11CNTRL-ERhu1rdh7yMzMfaueGHCxMkzwUoEQjpg1 (reusable)
 
-A real RTL-SDR Blog V4 dongle is plugged into the dev machine. This means we can:
-- Test `rtl_test -t` inside the Docker chroot with USB passthrough
-- Verify whether Trixie's packaged rtl-sdr 2.0.2 works with the V4
-- Test SoapySDR device detection with real hardware
-- Tune to actual frequencies and verify signal reception
-- Run `test-with-usb.sh` for real validation, not just binary checks
+## File structure
 
-This is the first time we have hardware in the loop — prioritize live testing over mock validation.
+```
+pi-sdr/
+├── Dockerfile                          # Build container (Ubuntu 24.04 + qemu + docker.io)
+├── docker-compose.yml                  # binfmt + build service (mounts Docker socket)
+├── .env / .env.example                 # Runtime config (WiFi, Tailscale, OpenWebRX admin)
+├── scripts/
+│   ├── build-image.sh                  # Download, resize, mount, chroot, pre-pull Docker image, compress
+│   ├── provision.sh                    # In-chroot: apt install, Docker CE, OpenWebRX config, Tailscale
+│   ├── check-sdr.sh                    # Device/driver check script
+│   └── test-with-usb.sh               # Docker-wrapped chroot with USB passthrough
+├── config/
+│   ├── system/blacklist-sdr.conf       # DVB kernel module blacklist
+│   └── openwebrx/
+│       ├── openwebrx.conf              # Core config
+│       ├── settings.json               # SDR profiles (8 bands)
+│       └── bookmarks.d/*.json          # 9 bookmark files
+├── test-scripts/                       # Deployed to /usr/local/bin/ on Pi
+│   ├── tune.sh, scan.sh, check-sdr.sh
+├── .github/workflows/build.yml        # CI: shellcheck + build + release on tag push
+├── docs/
+│   ├── NEXT_SESSION_PROMPT.md          # This file
+│   └── superpowers/plans/              # Implementation plans
+└── data/                               # Build output (gitignored)
+```
 
 ## References
 
-- Prior repo: https://github.com/mihow/pi-radio-monitoring-research
-- RTL-SDR Blog V4 info: https://www.rtl-sdr.com/v4/
-- Trixie Pi OS images: https://downloads.raspberrypi.com/raspios_lite_arm64/images/
-- Trixie rtl-sdr package: https://packages.debian.org/trixie/rtl-sdr
-- SoapySDR Trixie: https://packages.debian.org/trixie/soapysdr-tools
+- Prior repo: /home/michael/Projects/Radio/pi-radio-monitor-research/
+- OpenWebRX+ on middle-earth: v1.2.94, apt from luarvique.github.io/ppa, running on port 8073
+- OpenWebRX+ Docker images: slechev/openwebrxplus-softmbe (arm64 + amd64)
+- Tailscale admin: https://login.tailscale.com/admin
+- RTL-SDR Blog V4: 0bda:2838, R828D tuner, 29 gain values (0.0–49.6 dB)

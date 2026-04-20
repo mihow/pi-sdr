@@ -1,0 +1,45 @@
+services:
+  # Tailscale sidecar — provides network identity, HTTPS cert, and SSH
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: pi-sdr-test
+    container_name: pi-sdr-tailscale
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
+      - TS_HOSTNAME=pi-sdr-test
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+    volumes:
+      - ts-state:/var/lib/tailscale
+      - owrx-etc:/owrx-etc
+      - ./scripts/test-entrypoint.sh:/entrypoint-custom.sh:ro
+      - ./config/openwebrx:/config-src:ro
+    entrypoint: ["/bin/sh", "/entrypoint-custom.sh"]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+  # OpenWebRX+ — shares Tailscale network, uses its HTTPS cert
+  openwebrx:
+    image: slechev/openwebrxplus-softmbe:latest
+    container_name: pi-sdr-openwebrx
+    network_mode: service:tailscale
+    depends_on:
+      tailscale:
+        condition: service_started
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - owrx-etc:/etc/openwebrx
+      - ./config/openwebrx/settings.json:/var/lib/openwebrx/settings.json
+    environment:
+      - OPENWEBRX_ADMIN_USER=admin
+      - OPENWEBRX_ADMIN_PASSWORD=${OPENWEBRX_ADMIN_PASSWORD:-picketfencing}
+    tmpfs:
+      - /tmp
+
+volumes:
+  ts-state:
+  owrx-etc:
