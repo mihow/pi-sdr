@@ -60,5 +60,17 @@ From [pi-radio-monitoring-research](https://github.com/mihow/pi-radio-monitoring
 - **PipeWire TCP mode** (port 4713) required for audio from Docker containers — socket bind-mount doesn't work
 - **Trixie rtl-sdr 2.0.2** includes V4 support — may not need custom Blog fork compile
 
+## Key learnings from radio scanner
+
+- **SoapySDR.Device(dict)** fails on some versions (e.g., Pi's Trixie package). Must use `enumerate()` first, then pass the `SoapySDRKwargs` result to `Device()`.
+- **Docker USB device permissions** need `privileged: true` in compose — plugdev group ownership on `/dev/bus/usb` device nodes blocks non-root access.
+- **OpenWebRX+ bans rapid connections** — "robot score" in `owrx/connection.py` increases with profile switches, 30+ triggers 12-hour `BannedClientException`. Don't use OpenWebRX+ WebSocket as scanner backend.
+- **FM deviation varies by service**: NFM = 2.5 kHz, NOAA/Marine/wide NFM = 5 kHz, WFM broadcast = 75 kHz. Using wrong deviation produces static/distortion.
+- **Air Band uses AM**, not FM. Needs envelope detection, not phase differentiation.
+- **Auto-discover with low squelch** creates hundreds of noise-floor channels. Needs separate, higher threshold.
+- **Browser audio**: `ScriptProcessorNode` with per-chunk queue produces choppy audio. Must use continuous `Float32Array` buffer. Also match buffer size to chunk size (1024 works well for 27ms chunks).
+- **RTL-SDR Blog V4 noise floor** is ~26-28 dB in FFT power scale. Squelch of 35 dB is a reasonable default.
+- **FFT scanning is fast** — full 262K-sample FFT + channel power computation takes ~2ms on Pi 5. Demod is the bottleneck (~16ms per channel).
+
 ## Downstream projects
 - [pi-radio-station](https://github.com/mihow/pi-radio-station) — full SDR monitoring station with Liquidsoap audio mixing, AirPlay, web dashboard
