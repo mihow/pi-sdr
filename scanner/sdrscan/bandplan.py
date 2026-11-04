@@ -37,7 +37,8 @@ class Band:
     raster_origin_hz: int = 0
     bw_hz: int = 12_500
     gain_db: float = 32.8
-    threshold_db: float = 10.0
+    # Offset above the per-hop floor. None means the detector default (DetectConfig).
+    threshold_db: float | None = None
     tier: str = "B"
     policy: str = "occupancy"
     deviation_hz: int = 2_500

@@ -49,7 +49,7 @@ class DetectConfig:
     crop_frac: float = 0.10
     dc_mask_bins: int = 3
     tune_offset_hz: int = 150_000
-    min_width_hz: float = 1_000.0
+    min_width_hz: float = 500.0  # one 586 Hz bin passes; averaged noise rarely spikes 10 dB
     clip_level: float = 0.99
     dwell_open_snr_db: float = 20.0
     hang_s: float = 2.0

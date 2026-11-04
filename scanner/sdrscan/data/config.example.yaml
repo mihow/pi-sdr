@@ -28,7 +28,7 @@ detect:
   crop_frac: 0.10
   dc_mask_bins: 3
   tune_offset_hz: 150000
-  min_width_hz: 1000.0
+  min_width_hz: 500.0
   clip_level: 0.99
   dwell_open_snr_db: 20.0
   hang_s: 2.0

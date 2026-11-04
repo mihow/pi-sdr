@@ -11,7 +11,6 @@ defaults:
   raster_hz: 12500
   bw_hz: 12500
   gain_db: 32.8
-  threshold_db: 10.0
   tier: B
   policy: occupancy
   deviation_hz: 2500
@@ -22,7 +21,7 @@ bands:
   - {id: vhf_low, name: VHF low band, lo_hz: 30_000_000, hi_hz: 50_000_000, mode: nfm, raster_hz: 20_000, policy: dwell}
   - {id: ham_6m, name: Amateur 6 m, lo_hz: 50_000_000, hi_hz: 54_000_000, mode: nfm, raster_hz: 20_000, policy: dwell}
   - {id: tv_vhf_lo, name: TV VHF 2-6, lo_hz: 54_000_000, hi_hz: 88_000_000, raster_hz: 100_000, bw_hz: 100_000}
-  - {id: fm_bcast, name: FM broadcast, lo_hz: 88_000_000, hi_hz: 108_000_000, mode: wfm, raster_hz: 200_000, raster_origin_hz: 100_000, bw_hz: 180_000, threshold_db: 15.0, gain_db: 8.7}
+  - {id: fm_bcast, name: FM broadcast, lo_hz: 88_000_000, hi_hz: 108_000_000, mode: wfm, raster_hz: 200_000, raster_origin_hz: 100_000, bw_hz: 180_000, gain_db: 8.7}
   - {id: aero_nav, name: Aviation navigation, lo_hz: 108_000_000, hi_hz: 118_000_000, mode: am, raster_hz: 50_000, bw_hz: 8_000}
   # 8.33 kHz channels are not on an integer Hz raster; the 25 kHz raster is used for all.
   - {id: airband, name: Airband, lo_hz: 118_000_000, hi_hz: 137_000_000, mode: am, raster_hz: 25_000, bw_hz: 8_000, gain_db: 40.2, tier: A, policy: dwell}
