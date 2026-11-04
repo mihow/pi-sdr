@@ -1,11 +1,16 @@
 """The core loop: source -> scheduler -> detector -> tracker -> channelizer/gate -> store.
 
-``Runner.step`` runs one scheduler job. The voice gate and clip store are reached only
-through small interfaces; Part A passes ``AlwaysNoiseGate`` and ``NoClips``.
+``Runner.step`` runs one scheduler job. During a dwell, each voice-capable channel's audio
+goes to its voice gate and to a clip writer. When the track closes, the gate's verdict
+becomes the transmission's class; a voice transmission of at least ``min_clip_s`` keeps its
+clip, anything else is discarded. The closed transmission then goes to the store and its
+hour rollup, and to ``on_tx`` (the service queues speech-to-text there).
 
-``spectrum="psd"`` asks a source that offers ``read_psd`` (the synthetic source) for the
-averaged spectrum directly instead of IQ. Scene simulations of a day or a week use it;
-dwell audio is then not produced.
+``spectrum`` picks how the detector sees the band. ``iq`` renders and analyzes real IQ for
+everything. ``psd`` asks a source that offers ``read_psd`` (the synthetic source) for the
+averaged spectrum directly, which keeps week-long simulations fast but produces no dwell
+audio. ``hybrid`` uses the fast spectrum for survey hops and real IQ for dwells, so a
+simulation also exercises demodulation, the voice gate and clips.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ import typing
 
 import numpy as np
 
-from . import IQ_RATE
+from . import IQ_RATE, rollup
 from .bandplan import BandPlan
 from .clock import Clock
 from .config import Config
@@ -23,8 +28,8 @@ from .dsp.channelizer import Channelizer
 from .iq.base import IqSource, IqSourceError
 from .scheduler import CALIBRATE, DWELL, IDLE, SURVEY, Job, Scheduler
 from .store import Store
-from .tracker import Tracker, TrackEvent
-from .voice.gate import AlwaysNoiseGate, Gate
+from .tracker import Tracker, TrackEvent, TrackState, Transmission
+from .voice.gate import Gate, VoiceGate, VoiceState
 
 BACKOFF_START_S = 5.0
 BACKOFF_MAX_S = 300.0
@@ -32,20 +37,37 @@ MAX_UNVISITED_S = 900.0  # longer than a tier B pass, so tier B tracks are not c
 PRUNE_EVERY_S = 86400.0
 
 
-class ClipSink(typing.Protocol):
-    def begin(self, hz: int, t: float) -> object | None: ...
+NOW_S = 300.0
 
-    def finish(self, writer: object, meta: dict) -> int | None: ...
+
+class ClipSink(typing.Protocol):
+    def begin(self, hz: int, t: float) -> typing.Any: ...
+
+    def finish(self, writer: typing.Any, meta: dict) -> int | None: ...
+
+    def abort(self, writer: typing.Any) -> None: ...
+
+    def disk_low(self) -> bool: ...
 
 
 class NoClips:
-    """Part A stand-in for the clip store: records nothing."""
+    """A clip sink that records nothing (tests and runs without storage)."""
 
     def begin(self, hz: int, t: float) -> None:
         return None
 
     def finish(self, writer: object, meta: dict) -> None:
         return None
+
+    def abort(self, writer: object) -> None:
+        return None
+
+    def disk_low(self) -> bool:
+        return False
+
+
+# (transmission id, transmission, kept clip audio at AUDIO_RATE or None)
+OnTx = typing.Callable[[int, Transmission, np.ndarray | None], None]
 
 
 class Runner:
@@ -60,15 +82,16 @@ class Runner:
         scheduler: Scheduler | None = None,
         tracker: Tracker | None = None,
         spurs: SpurMap | None = None,
-        gate_factory: typing.Callable[[], Gate] = AlwaysNoiseGate,
+        gate_factory: typing.Callable[[], Gate] = VoiceGate,
         clips: ClipSink | None = None,
+        on_tx: OnTx | None = None,
         mode_fn: typing.Callable[[], str] | None = None,
         spectrum: str = "iq",
         rate: int = IQ_RATE,
     ) -> None:
-        if spectrum not in {"iq", "psd"}:
-            raise ValueError("spectrum must be 'iq' or 'psd'")
-        if spectrum == "psd" and not hasattr(source, "read_psd"):
+        if spectrum not in {"iq", "psd", "hybrid"}:
+            raise ValueError("spectrum must be 'iq', 'psd' or 'hybrid'")
+        if spectrum != "iq" and not hasattr(source, "read_psd"):
             raise ValueError("this source has no fast spectrum path; use spectrum='iq'")
         self.cfg = cfg
         self.plan = plan
@@ -82,6 +105,9 @@ class Runner:
         self.clips = clips or NoClips()
         self.mode_fn = mode_fn or (lambda: "normal")
         self.spectrum = spectrum
+        self._survey_psd = spectrum in {"psd", "hybrid"}
+        self._dwell_iq = spectrum in {"iq", "hybrid"}
+        self.on_tx = on_tx
         self.rate = rate
         self.status: dict = {
             "mode": "normal",
@@ -97,6 +123,8 @@ class Runner:
         self._channelizer: Channelizer | None = None
         self._chan_key: tuple | None = None
         self._gates: dict[int, Gate] = {}
+        self._writers: dict[int, typing.Any] = {}
+        self._tuner: dict = {}
         self._hour = int(clock.now() // 3600 * 3600)
         self._last_prune = clock.now()
         self._marked_spurs: set[int] = set()
@@ -135,6 +163,7 @@ class Runner:
             self.clock.sleep(job.duration_s)
             return
         self.source.tune(job.center_hz, job.gain_db)
+        self._tuner = {"center_hz": int(job.center_hz), "kind": job.kind.lower()}
         if job.kind == SURVEY:
             r = self._measure(job.center_hz, int(job.duration_s * self.rate))
             self._survey_result(r, "survey")
@@ -150,7 +179,7 @@ class Runner:
 
     def _measure(self, center: int, n: int, iq: np.ndarray | None = None) -> HopResult:
         d = self.cfg.detect
-        if self.spectrum == "psd":
+        if self._survey_psd and iq is None:
             navg = max(1, min(d.navg, n // d.nfft))
             psd, clip = self.source.read_psd(d.nfft, navg)  # type: ignore[attr-defined]
             return analyze_psd(psd, center, self.rate, self.plan, d, clip_frac=clip)
@@ -177,37 +206,85 @@ class Runner:
         n = int(block_s * self.rate)
         blocks = max(1, int(round(job.duration_s / block_s)))
         voice = [c for c in job.channels if c.voice_capable]
-        if self.spectrum == "iq" and voice:
+        if self._dwell_iq and voice:
             key = (job.center_hz, tuple(c.hz for c in voice))
             if key != self._chan_key:
                 self._channelizer = Channelizer(self.rate, job.center_hz, voice)
                 self._chan_key = key
         for _ in range(blocks):
-            if self.spectrum == "psd":
+            if not self._dwell_iq:
                 r = self._measure(job.center_hz, n)
             else:
                 iq = self.source.read(n)
                 r = analyze(iq, job.center_hz, self.rate, self.plan, self.cfg.detect)
                 r.clip_frac = clip_fraction(iq, self.cfg.detect.clip_level)
                 if self._channelizer is not None and voice:
-                    for hz, pcm in self._channelizer.push(iq).items():
-                        gate = self._gates.get(hz)
-                        if gate is None:
-                            gate = self._gates[hz] = self.gate_factory()
-                        gate.push(pcm)
-                        self.status["dwell_audio_s"] += len(pcm) / gate.rate
+                    self._audio(self._channelizer.push(iq))
             self._survey_result(r, "dwell")
 
+    def _audio(self, chunks: dict[int, np.ndarray]) -> None:
+        """Feed each active channel's audio to its gate and, while it may be voice, a clip."""
+        t = self.clock.now()
+        for hz, pcm in chunks.items():
+            if self.tracker.state(hz) is not TrackState.ACTIVE:
+                continue  # the channel's track is gone or not yet confirmed
+            gate = self._gates.get(hz)
+            if gate is None:
+                gate = self._gates[hz] = self.gate_factory()
+            state = gate.push(pcm)
+            self.status["dwell_audio_s"] += len(pcm) / gate.rate
+            if state in (VoiceState.PENDING, VoiceState.VOICE):
+                w = self._writers.get(hz)
+                if w is None:
+                    w = self._writers[hz] = self.clips.begin(hz, t - len(pcm) / gate.rate)
+                if w is not None:
+                    w.write(pcm)
+
+    def now_state(self) -> dict:
+        """Channels heard in the last 5 minutes and the tuner state (the digest's ``now``)."""
+        t = self.clock.now()
+        active = []
+        for tr in self.tracker.tracks():
+            if tr.state is not TrackState.ACTIVE or t - tr.last_t > NOW_S:
+                continue
+            gate = self._gates.get(tr.hz)
+            cls = "voice" if gate is not None and gate.summary().get("class") == "voice" else None
+            item = {"hz": tr.hz, "age_s": int(max(0, t - tr.last_t)), "snr": round(tr.peak_snr, 1)}
+            item["cls"] = cls or "unknown"
+            active.append(item)
+        return {"active": active, "tuner": dict(self._tuner, mode=self.status["mode"])}
+
     # -- events ------------------------------------------------------------------------
+    def _close_tx(self, tx: Transmission) -> None:
+        gate = self._gates.pop(tx.hz, None)
+        writer = self._writers.pop(tx.hz, None)
+        if gate is not None:
+            summary = gate.summary()
+            tx.voice_ratio = summary.get("voice_ratio")
+            tx.cls = summary.get("class", "unknown")
+            gate.reset()
+        clip_id = None
+        pcm = None
+        keep = tx.cls == "voice" and tx.dur_ms / 1000 >= self.cfg.quota.min_clip_s
+        if writer is not None:
+            if keep:
+                pcm = writer.read()
+                clip_id = self.clips.finish(writer, {"class": tx.cls})
+            else:
+                self.clips.abort(writer)
+        tx.clip_id = clip_id
+        if self.clips.disk_low():
+            self.status["dropped_tx"] = self.status.get("dropped_tx", 0) + 1
+            return  # below the free-space floor: rollups, health and digests continue
+        tx_id = self.store.add_tx(tx)
+        rollup.on_tx_closed(self.store, tx)
+        if self.on_tx is not None:
+            self.on_tx(tx_id, tx, pcm if clip_id is not None else None)
+
     def _handle(self, events: list[TrackEvent]) -> None:
         for ev in events:
             if ev.kind == "closed" and ev.tx is not None:
-                gate = self._gates.pop(ev.hz, None)
-                if gate is not None:
-                    summary = gate.summary()
-                    ev.tx.voice_ratio = summary.get("voice_ratio")
-                    gate.reset()
-                self.store.add_tx(ev.tx)
+                self._close_tx(ev.tx)
             elif ev.kind == "always_on":
                 band = self.plan.band_for(ev.hz).id
                 self.store.mark_channel(ev.hz, band=band, always_on=True, t=ev.t)

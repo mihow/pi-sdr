@@ -284,7 +284,12 @@ class DigestPublisher:
             if self.ledger.state() == "capped":
                 break
             ctype = "text/html; charset=utf-8" if name.endswith(".html") else "application/json"
-            resp = self._send(name, body, ctype, None)
+            # Over the network the page travels gzipped and the host serves it with
+            # Content-Encoding: gzip; a local folder keeps the plain file.
+            if self.target.name == "file":
+                resp = self._send(name, body, ctype, None)
+            else:
+                resp = self._send(name, gzip.compress(body, 9, mtime=0), ctype, "gzip")
             if 200 <= resp.status < 300:
                 self.ledger.store.set_meta(key, digest)
                 self.ledger.store.db.commit()
