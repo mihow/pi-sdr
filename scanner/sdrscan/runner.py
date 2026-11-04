@@ -15,6 +15,7 @@ simulation also exercises demodulation, the voice gate and clips.
 
 from __future__ import annotations
 
+import json
 import typing
 
 import numpy as np
@@ -38,6 +39,7 @@ BACKOFF_MAX_S = 300.0
 MAX_OPEN_FAILURES = 8
 MAX_UNVISITED_S = 900.0  # longer than a tier B pass, so tier B tracks are not cut short
 PRUNE_EVERY_S = 86400.0
+SPUR_MARKS_KEY = "spur_marks"
 
 
 NOW_S = 300.0
@@ -137,6 +139,7 @@ class Runner:
         self._hour = int(clock.now() // 3600 * 3600)
         self._last_prune = clock.now()
         self._marked_spurs: set[int] = set()
+        self._restore_marks(seed_spurs=spurs is None)
 
     # -- loop --------------------------------------------------------------------------
     def run(self, until: float) -> None:
@@ -294,9 +297,10 @@ class Runner:
         for ev in events:
             if ev.kind == "closed" and ev.tx is not None:
                 self._close_tx(ev.tx)
-            elif ev.kind == "always_on":
+            elif ev.kind in ("always_on", "always_off"):
                 band = self.plan.band_for(ev.hz).id
-                self.store.mark_channel(ev.hz, band=band, always_on=True, t=ev.t)
+                on = ev.kind == "always_on"
+                self.store.mark_channel(ev.hz, band=band, always_on=on, t=ev.t)
 
     def _mark_spur(self, hz: float, t: float) -> None:
         ch = self.plan.channel_for(hz)
@@ -352,6 +356,27 @@ class Runner:
             if cov is not None:
                 self.store.set_coverage(self._hour, cov)
             self._hour = hour
+            self._save_marks()
+
+    # -- marks that must survive a restart ---------------------------------------------
+    def _restore_marks(self, seed_spurs: bool) -> None:
+        """Seed the spur map and the always-on carriers from the store. Without this, a
+        restart records known spurs for a day and carriers for an hour."""
+        self.store.flush()
+        raw = self.store.meta(SPUR_MARKS_KEY)
+        if seed_spurs and raw:
+            try:
+                marks = json.loads(raw)
+                self.spurs.seed(marks.get("abs_hz", []), marks.get("offset_hz", []))
+            except (ValueError, AttributeError):
+                pass  # a damaged value only costs a day of relearning
+        on = [r[0] for r in self.store.db.execute("SELECT hz FROM channels WHERE always_on = 1")]
+        self.tracker.seed_always_on(on, self.clock.now())
+
+    def _save_marks(self) -> None:
+        value = json.dumps(self.spurs.marked(), sort_keys=True)
+        with self.store.db:
+            self.store.set_meta(SPUR_MARKS_KEY, value)
 
     def _housekeeping(self) -> None:
         self._roll_hour()

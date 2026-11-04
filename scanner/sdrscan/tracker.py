@@ -77,7 +77,7 @@ class Track:
 
 @dataclasses.dataclass(frozen=True)
 class TrackEvent:
-    kind: str  # opened | closed | always_on
+    kind: str  # opened | closed | always_on | always_off
     hz: int
     t: float
     tx: Transmission | None = None
@@ -131,6 +131,12 @@ class Tracker:
     def is_always_on(self, hz: int) -> bool:
         d = self._duty.get(hz)
         return bool(d and d.always_on)
+
+    def seed_always_on(self, hzs: list[int], t: float) -> None:
+        """Carry always-on marks over a restart. A seeded channel clears as usual, once its
+        survey duty falls below the clear threshold after it is seen again."""
+        for hz in hzs:
+            self._ensure_duty(int(hz), t).always_on = True
 
     def always_on(self) -> list[int]:
         return sorted(hz for hz, d in self._duty.items() if d.always_on)
@@ -262,6 +268,7 @@ class Tracker:
             events.append(TrackEvent("always_on", hz, t))
         elif d.always_on and duty < _ALWAYS_ON_CLEAR:
             d.always_on = False
+            events.append(TrackEvent("always_off", hz, t))
         if not d.always_on and t - d.last_hit_t > _DUTY_WINDOW_S and hz not in self._tracks:
             del self._duty[hz]
             self._keys.remove(hz)

@@ -182,3 +182,20 @@ def test_intermittent_or_wide_signals_are_not_spurs():
         k += 1
     assert not spurs.is_spur(146_700_000)
     assert not spurs.is_spur(146_300_000)
+
+
+def test_seeded_spur_marks_apply_at_once_and_expire_after_a_day_of_new_evidence():
+    """Marks carried over a restart suppress a known spur from the first hop. Once the map
+    has a day of its own observations, a seed that the new data does not confirm is gone."""
+    spurs = SpurMap()
+    spurs.seed(abs_hz=[146_400_000], offset_hz=[312_000])
+    spurs.update(_hop(146_000_000, []), 0.0)
+    assert spurs.is_spur(146_400_000)
+    assert spurs.is_spur(150_312_000, center_hz=150_000_000)
+    assert spurs.marked() == {"abs_hz": [146_400_000], "offset_hz": [312_000]}
+    t = 0.0
+    while t <= 24 * 3600 + 600:
+        spurs.update(_hop(146_000_000, []), t)  # the spur is gone
+        t += 60.0
+    assert not spurs.is_spur(146_400_000)
+    assert spurs.marked() == {"abs_hz": [], "offset_hz": []}

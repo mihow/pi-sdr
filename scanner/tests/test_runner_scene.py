@@ -109,3 +109,27 @@ def test_iq_mode_runs_the_channelizer_during_dwells(tmp_path, vclock):
     assert runner.status["dwell_audio_s"] > 1.0
     txs = store.transmissions()
     assert [t["hz"] for t in txs] == [462_562_500]
+
+
+def test_spur_and_always_on_marks_survive_a_restart(tmp_path, vclock):
+    """A restarted runner must not record a known spur or carrier as new transmissions for
+    the day (spur) or hour (carrier) it would take to learn them again."""
+    from sdrscan.detect import Peak
+
+    plan = BandPlan.load(DEFAULT_BANDPLAN)
+    source = SyntheticSource(Scene.from_yaml("emitters: []\n", clock=vclock), vclock)
+    store = Store.open(tmp_path / "scan.sqlite", vclock)
+    store.migrate()
+    cfg = Config()
+    a = Runner(cfg=cfg, plan=plan, source=source, clock=vclock, store=store, spectrum="psd")
+    a.spurs.seed(abs_hz=[146_400_000], offset_hz=[312_000])  # as if learned over a day
+    carrier = plan.channel_for(162_550_000).hz
+    store.mark_channel(carrier, band=plan.band_for(carrier).id, always_on=True)
+    a.shutdown()
+    b = Runner(cfg=cfg, plan=plan, source=source, clock=vclock, store=store, spectrum="psd")
+    assert b.spurs.is_spur(146_400_000)
+    assert b.spurs.is_spur(150_312_000, center_hz=150_000_000)
+    assert b.tracker.is_always_on(carrier)
+    t = vclock.now()
+    ev = b.tracker.update([Peak(float(carrier), 6_000.0, -30.0, 25.0)], t, "survey")
+    assert not [e for e in ev if e.kind == "opened"] and not b.tracker.tracks()

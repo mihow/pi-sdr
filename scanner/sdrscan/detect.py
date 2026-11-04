@@ -223,10 +223,21 @@ class SpurMap:
         self._marked_abs: set[int] = set()
         self._marked_off: set[int] = set()
         self._refreshed_t: float | None = None
+        self._start_t: float | None = None
+        self._seed_abs: set[int] = set()
+        self._seed_off: set[int] = set()
+
+    def seed(self, abs_hz: list[int], offset_hz: list[int]) -> None:
+        """Carry marks over a restart (from ``marked()``). Seeds apply at once and are
+        dropped once this map has ``min_hours`` of its own evidence."""
+        self._seed_abs = {round(h / self.key_hz) for h in abs_hz}
+        self._seed_off = {round(h / self.key_hz) for h in offset_hz}
 
     def update(self, r: HopResult, t: float) -> None:
         self._hops += 1
         self._t = t
+        if self._start_t is None:
+            self._start_t = t
         lo = bisect.bisect_left(self._abs_keys, r.lo_hz // self.key_hz)
         hi = bisect.bisect_right(self._abs_keys, r.hi_hz // self.key_hz)
         for key in self._abs_keys[lo:hi]:
@@ -256,19 +267,21 @@ class SpurMap:
         if self._refreshed_t is None or self._t - self._refreshed_t >= _SPUR_REFRESH_S:
             self._refresh()
         k = round(hz / self.key_hz)
-        if any(k + d in self._marked_abs for d in (-1, 0, 1)):
+        marked_abs = self._marked_abs | self._seed_abs
+        if any(k + d in marked_abs for d in (-1, 0, 1)):
             return True
         if center_hz is not None:
             ko = round((hz - center_hz) / self.key_hz)
-            if any(ko + d in self._marked_off for d in (-1, 0, 1)):
+            marked_off = self._marked_off | self._seed_off
+            if any(ko + d in marked_off for d in (-1, 0, 1)):
                 return True
         return False
 
     def marked(self) -> dict[str, list[int]]:
         self._refresh()
         return {
-            "abs_hz": sorted(k * self.key_hz for k in self._marked_abs),
-            "offset_hz": sorted(k * self.key_hz for k in self._marked_off),
+            "abs_hz": sorted(k * self.key_hz for k in self._marked_abs | self._seed_abs),
+            "offset_hz": sorted(k * self.key_hz for k in self._marked_off | self._seed_off),
         }
 
     @staticmethod
@@ -296,6 +309,8 @@ class SpurMap:
 
     def _refresh(self) -> None:
         self._refreshed_t = self._t
+        if self._start_t is not None and self._t - self._start_t >= self.min_s:
+            self._seed_abs, self._seed_off = set(), set()  # own evidence decides from here
         self._marked_abs = {k for k, st in self._abs.items() if self._qualifies(st, st.visits)}
         self._marked_off = {
             k for k, st in self._off.items() if self._qualifies(st, self._hops - st.first_hop + 1)
