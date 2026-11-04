@@ -92,6 +92,31 @@ class Health:
         }
 
 
+# Raspberry Pi firmware throttle word (``get_throttled``). Bits 0 to 3 are the current
+# state: under-voltage, frequency capped, throttled, soft temperature limit. Bits 16 to 19
+# record that the same thing has happened since boot.
+THROTTLED_NOW = 0xF
+THROTTLED_SINCE_BOOT = 0xF0000
+THROTTLED_GLOBS = (
+    "devices/platform/soc/soc:firmware/get_throttled",
+    "devices/platform/*/*:firmware/get_throttled",
+    "devices/platform/*firmware*/get_throttled",
+)
+
+
+def _throttle_flags(word: int | None) -> list[str]:
+    if not word:
+        return []
+    out = []
+    if word & 0x1:
+        out.append("under_voltage")
+    if word & 0xE:
+        out.append("throttled")
+    if word & THROTTLED_SINCE_BOOT and not word & THROTTLED_NOW:
+        out.append("power_fault_since_boot")
+    return out
+
+
 class HealthMonitor:
     def __init__(
         self,
@@ -143,6 +168,7 @@ class HealthMonitor:
         st = self._status()
         if st.get("mode") == "no_dongle" and "no_dongle" not in flags:
             flags.append("dongle_busy")
+        flags += _throttle_flags(throttled)
         flags.extend(f for f in self._extra_flags() if f not in flags)
         db = self.cfg.data_root / "db" / "scan.sqlite"
         db_mb = (
@@ -188,7 +214,8 @@ class HealthMonitor:
             target = 0
         else:
             target = max(i for i, lim in enumerate(limits) if temp >= lim)
-        if throttled:  # any current or past under-voltage or throttle bit
+        now_bits = (throttled or 0) & THROTTLED_NOW
+        if now_bits:  # current under-voltage, cap or throttle; past bits only report
             target = max(target, 2)
         if target >= self._level:
             self._level = target
@@ -197,7 +224,7 @@ class HealthMonitor:
             temp is None or temp < limits[self._level] - t.hysteresis_c
         ):
             self._level -= 1
-        if throttled:
+        if now_bits:
             self._level = max(self._level, 2)
 
     def _temp(self) -> float | None:
@@ -208,6 +235,14 @@ class HealthMonitor:
             return None
 
     def _throttled(self) -> int | None:
+        """The firmware's throttle word: the sysfs node first (readable inside the
+        container), then ``vcgencmd`` on a host install."""
+        for pattern in THROTTLED_GLOBS:
+            for p in sorted(self.sys_root.glob(pattern)):
+                try:
+                    return int(p.read_text().strip(), 16)
+                except (OSError, ValueError):
+                    continue
         try:
             proc = self._run(["vcgencmd", "get_throttled"], capture_output=True, timeout=5)
         except (OSError, subprocess.SubprocessError):

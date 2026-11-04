@@ -98,3 +98,33 @@ def test_health_row_and_digest(sys_root, vclock, tmp_path):
     d = h.to_digest()
     assert d["up_s"] == 7200 and d["dongle"] is True and d["temp_c"] == 45.0
     assert set(d) >= {"mode", "flags", "disk_free_pct", "quota_used_mb", "clock_ok", "iq_age_s"}
+
+
+def _throttled_file(sys_root: Path, value: str) -> None:
+    """The firmware's sysfs node, which the container can read without vcgencmd."""
+    p = sys_root / "devices/platform/soc/soc:firmware/get_throttled"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(value + "\n")
+
+
+def test_throttle_state_comes_from_sysfs_without_vcgencmd(sys_root, vclock, tmp_path):
+    _usb(sys_root)
+    _throttled_file(sys_root, "50005")
+    hm = _monitor(sys_root, vclock, tmp_path)
+    h = hm.sample()
+    assert h.throttled == 0x50005 and hm.mode() == "very_hot"
+    assert "under_voltage" in h.flags
+
+
+def test_a_past_brown_out_is_reported_but_does_not_hold_the_governor(sys_root, vclock, tmp_path):
+    """Bits 16 to 19 mean "has occurred since boot". One brown-out must not disable
+    dwells, clips and speech-to-text until the next reboot."""
+    _usb(sys_root)
+    _throttled_file(sys_root, "50005")
+    hm = _monitor(sys_root, vclock, tmp_path)
+    hm.sample()
+    assert hm.mode() == "very_hot"
+    _throttled_file(sys_root, "50000")  # the supply recovered; the sticky bits stay
+    h = hm.sample()
+    assert hm.mode() == "normal"
+    assert "power_fault_since_boot" in h.flags and "under_voltage" not in h.flags

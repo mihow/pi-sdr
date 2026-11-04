@@ -338,7 +338,7 @@ class ProseEngine(typing.Protocol):
 ### 5.13 HealthMonitor and Governor (`health.py`)
 
 Every 30 s it reads SoC temperature (`/sys/class/thermal/thermal_zone0/temp`), the throttle
-state (`vcgencmd get_throttled` if present), disk free, quota use, database size, dongle
+state (the firmware `get_throttled` sysfs node, or `vcgencmd` if present; only the current bits 0 to 3 govern, the since-boot bits are a flag), disk free, quota use, database size, dongle
 presence (USB id `0bda:2838` in sysfs), clock sync state, process RSS and the uplink ledger.
 All paths come from a configurable root so tests can fake them.
 
