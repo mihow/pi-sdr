@@ -120,9 +120,7 @@ class Service:
                 self.uplink_error = str(exc)
                 log.error("uplink disabled: %s; scanning and the live page continue", exc)
             else:
-                publisher = DigestPublisher(
-                    target, self.ledger, root / "outbox", clock, cfg.uplink
-                )
+                publisher = DigestPublisher(target, self.ledger, root / "outbox", clock, cfg.uplink)
         self.publisher = publisher
         self._stt_fixed = stt
         self.prose = prose or make_prose(cfg.prose)
