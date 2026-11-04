@@ -1,0 +1,38 @@
+# A generic week of activity for scene tests. All frequencies are public band-plan channels.
+# Levels are dB of full scale. Per-band floors differ by up to 15 dB, as at a real site.
+seed: 7
+dc_db: -30
+noise_floor:
+  default_db: -45
+  bands:
+    - {lo_hz: 88_000_000, hi_hz: 108_000_000, level_db: -40}
+    - {lo_hz: 118_000_000, hi_hz: 137_000_000, level_db: -50}
+    - {lo_hz: 400_000_000, hi_hz: 512_000_000, level_db: -55}
+emitters:
+  # Always on: an unmodulated carrier, NOAA weather radio, an FM broadcast station, and a
+  # spur at a fixed offset from the tuner center (it appears in every hop).
+  - {kind: carrier, hz: 151_100_000, level_db: -60}
+  - {kind: nfm_voice, hz: 162_550_000, level_db: -40, deviation_hz: 5000}
+  - {kind: wfm, hz: 98_100_000, level_db: -30}
+  - {kind: spur, offset_hz: 450_000, level_db: -62}
+  # Bursty voice.
+  - kind: nfm_voice
+    hz: 462_562_500
+    level_db: -45
+    schedule: {every_s: 600, dur_s: 60, offset_s: 120}
+  - kind: nfm_voice
+    hz: 462_637_500
+    level_db: -48
+    schedule: {every_s: 900, dur_s: 45, offset_s: 300}
+  - kind: nfm_voice
+    hz: 146_520_000
+    level_db: -50
+    schedule: {every_s: 1200, dur_s: 90, offset_s: 200}
+  - kind: am_voice
+    hz: 122_800_000
+    level_db: -50
+    schedule: {every_s: 720, dur_s: 40, offset_s: 60}
+  - kind: nfm_voice
+    hz: 160_590_000
+    level_db: -50
+    schedule: {every_s: 1800, dur_s: 60, offset_s: 400}

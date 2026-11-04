@@ -32,6 +32,8 @@ class DutyConfig:
     survey_min_share: float = 0.55
     dwell_max_share: float = 0.40
     calibrate_share: float = 0.05
+    calibrate_interval_s: float = 300.0
+    calibrate_s: float = 1.0
     survey_hop_s: float = 0.1
     dwell_max_s: float = 60.0
     dwell_cooldown_s: float = 30.0
