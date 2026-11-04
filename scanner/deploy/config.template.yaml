@@ -1,7 +1,8 @@
 # sdrscan configuration for the rig. install.sh copies this to /etc/sdrscan/config.yaml only
 # when that file is missing, so edits on the rig are kept across upgrades.
 # Every key not listed here keeps the default in the package's config.example.yaml.
-# Secrets (the upload URL with its signature, passwords) go in /etc/sdrscan/uplink.env.
+# Secrets (the S3 endpoint, bucket and key pair) go in /etc/sdrscan/uplink.env. Until they
+# are set the scanner runs with pushes off.
 
 site_id: site                  # a short label shown on the dashboard
 data_root: /var/lib/sdrscan
@@ -12,7 +13,7 @@ quota:
   clip_quota_bytes: 2147483648 # 2 GiB of recent voice clips
 
 uplink:
-  target: http_put             # file | http_put | http_post
+  target: s3                   # s3 | http_put | http_post | file
   secrets_env: /etc/sdrscan/uplink.env
   cap_bytes: 30000000          # hard monthly cap for everything the scanner sends
   include_transcripts: false   # transcripts stay on the rig unless this is true

@@ -99,10 +99,15 @@ else
   run install -m 0644 "$HERE/config.template.yaml" "$ETC/config.yaml"
 fi
 if [ ! -e "$ETC/uplink.env" ]; then
-  echo "+ create $ETC/uplink.env (mode 0600) with SDRSCAN_UPLINK_URL left for the owner"
+  echo "+ create $ETC/uplink.env (mode 0600) with the S3 settings left for the owner"
   if [ "$DRY_RUN" -eq 0 ]; then
-    (umask 077; printf '# SDRSCAN_UPLINK_URL=https://<host>/<prefix>/{name}?<signature>\n' \
-      > "$ETC/uplink.env")
+    (umask 077; printf '%s\n' \
+      '# Fill these in, then: systemctl restart sdrscan. Pushes stay off until then.' \
+      '# SDRSCAN_S3_ENDPOINT=https://<object-store-origin>' \
+      '# SDRSCAN_S3_BUCKET=<bucket>' \
+      '# SDRSCAN_S3_PREFIX=<site>' \
+      '# SDRSCAN_S3_ACCESS_KEY=<key id scoped to the prefix>' \
+      '# SDRSCAN_S3_SECRET_KEY=<secret>' > "$ETC/uplink.env")
   fi
 fi
 gid=$(getent group plugdev | cut -d: -f3 || true)

@@ -71,7 +71,29 @@ The rig is not reachable now, so nothing has been installed. The install kit is 
 3. Copy the tarball and `deploy/` to the rig.
 4. Run `sudo deploy/install.sh --dry-run --image sdrscan-arm64.tar.zst`, read the output,
    then run it without `--dry-run`.
-5. Put the upload URL in `/etc/sdrscan/uplink.env` (mode 0600) and restart the service.
+5. Fill in the S3 settings in `/etc/sdrscan/uplink.env` (mode 0600) and restart the
+   service. Until then the scanner runs with pushes off and the digest health shows
+   `uplink_unconfigured`.
+
+The default off-site target is an S3-compatible bucket (`uplink.target: s3`). Use a
+long-lived access key that can only `PutObject` under one prefix of one bucket; the rig
+signs each request itself (SigV4), so nothing expires. Make that prefix publicly readable
+and open `<endpoint>/<bucket>/<prefix>/index.html` on the phone. S3 keeps the
+`Content-Encoding: gzip` the rig stores, so the page and digest travel gzipped. Signing
+needs the rig clock within 15 minutes of real time. `uplink.env` keys:
+
+| Key | Meaning |
+| --- | --- |
+| `SDRSCAN_S3_ENDPOINT` | `https://` origin of the object store, no bucket |
+| `SDRSCAN_S3_BUCKET` | bucket name (path-style addressing) |
+| `SDRSCAN_S3_PREFIX` | optional key prefix, for example the site name |
+| `SDRSCAN_S3_REGION` | optional, default `us-east-1` |
+| `SDRSCAN_S3_ACCESS_KEY`, `SDRSCAN_S3_SECRET_KEY` | the scoped key pair |
+
+`http_put` (WebDAV with a fixed `SDRSCAN_UPLINK_AUTH` header) and `http_post` (a collector on
+a tailnet peer) remain; they get the page uncompressed. An S3 presigned URL does not work as
+`http_put`: it signs one object key and expires within 7 days. The S3 path is tested against
+MinIO in Docker (`tests/test_uplink_s3.py`); it has not run against a hosted bucket yet.
 
 `install.sh` checks the OS, disk, DVB driver blacklist and `rtl_test` sample loss first. It
 keeps the previous image as `sdrscan:previous` and rolls back when the service is not healthy

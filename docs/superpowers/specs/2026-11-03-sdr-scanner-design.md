@@ -364,8 +364,12 @@ class DigestPublisher:
     def ledger(self) -> dict        # month_bytes, cap_bytes, state
 ```
 
-Targets: `file` (tests and local), `http_put` (S3-compatible presigned URL or WebDAV), and
-`http_post` (a tailnet peer). Stdlib `urllib` only.
+Targets: `file` (tests and local), `s3` (an S3-compatible bucket with a long-lived key
+scoped to one prefix, signed in process with SigV4; the default), `http_put` (WebDAV with
+a fixed auth header) and `http_post` (a tailnet peer). Stdlib `urllib` only. A presigned URL
+is not a target: it signs one key and expires within 7 days. Only `s3` keeps
+`Content-Encoding`, so only `s3` gets the page gzipped. A missing or bad target turns pushes
+off (`uplink_unconfigured`); it never stops the scanner.
 
 ### 5.15 Dashboard (`web/index.html`) and LiveServer (`live.py`)
 

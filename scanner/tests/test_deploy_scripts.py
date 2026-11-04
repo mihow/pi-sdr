@@ -111,7 +111,7 @@ def test_template_config_loads():
     from sdrscan.config import load_config
 
     cfg = load_config(DEPLOY / "config.template.yaml")
-    assert cfg.uplink.target == "http_put" and cfg.live.enabled is False
+    assert cfg.uplink.target == "s3" and cfg.live.enabled is False
 
 
 def test_progress_watchdog_exits_when_the_loop_is_stuck(tmp_path, vclock, sys_root):

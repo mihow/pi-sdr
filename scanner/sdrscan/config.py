@@ -218,8 +218,8 @@ def _validate(cfg: Config) -> None:
     for name in ("survey_min_share", "dwell_max_share", "calibrate_share"):
         if not 0.0 <= getattr(d, name) <= 1.0:
             raise ConfigError(f"duty.{name}: share must be between 0 and 1")
-    if cfg.uplink.target not in {"file", "http_put", "http_post"}:
-        raise ConfigError("uplink.target: must be file, http_put or http_post")
+    if cfg.uplink.target not in {"file", "s3", "http_put", "http_post"}:
+        raise ConfigError("uplink.target: must be file, s3, http_put or http_post")
     if cfg.stt.engine not in {"none", "whisper_cpp", "fake"}:
         raise ConfigError("stt.engine: must be none, whisper_cpp or fake")
     if cfg.prose.engine not in {"none", "llama_cli"}:

@@ -182,6 +182,18 @@ def test_page_upload_only_when_its_hash_changes(store, vclock, tmp_path):
     assert pub.publish_files({"index.html": b"<p>b</p>"}) == ["index.html"]
 
 
+def test_page_goes_uncompressed_to_a_host_that_does_not_keep_content_encoding(
+    server, store, vclock, tmp_path
+):
+    """A WebDAV or static host serves stored bytes without the header, so a gzipped page
+    would reach the browser as a binary blob."""
+    pub, _ = _publisher(server, store, vclock, tmp_path)
+    page = b"<!doctype html><p>a</p>"
+    assert pub.publish_files({"index.html": page}) == ["index.html"]
+    path, body, headers = server.got[-1]
+    assert body == page and "Content-Encoding" not in headers
+
+
 def test_secrets_file_parsing(tmp_path):
     p = tmp_path / "e"
     p.write_text("# comment\nSDRSCAN_UPLINK_URL='http://h/{name}'\nSDRSCAN_UPLINK_AUTH=Basic x\n")

@@ -11,7 +11,8 @@ estimate of the TLS handshake, goes on a monthly ``Ledger`` (spec section 10):
 
 Digests wait in an outbox while the host is unreachable (at most ``outbox_keep``). On
 recovery only the newest digest is sent as ``digest.json.gz``, plus one ``day-YYYYMMDD``
-file per missed day (the last digest of that day). Targets use stdlib ``urllib`` only.
+file per missed day (the last digest of that day). Targets use stdlib ``urllib`` only;
+the default is ``S3Target`` (SigV4 signed in process, see ``sign_v4``).
 Credentials come from the env file named by ``uplink.secrets_env`` and never appear in
 logs or argv; the upload URL is logged by scheme and host only.
 """
@@ -22,9 +23,11 @@ import dataclasses
 import datetime
 import gzip
 import hashlib
+import hmac
 import json
 import logging
 import os
+import time
 import typing
 import urllib.error
 import urllib.parse
@@ -59,6 +62,8 @@ class PushResult:
 
 class Target(typing.Protocol):
     name: str
+    # True when the host stores Content-Encoding and sends it back to browsers (S3 does).
+    keeps_encoding: bool
 
     def put(
         self, name: str, body: bytes, content_type: str, encoding: str | None = None
@@ -86,6 +91,7 @@ class FileTarget:
     """Writes objects into a directory (tests, or a locally synced folder)."""
 
     name = "file"
+    keeps_encoding = False
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
@@ -104,6 +110,7 @@ class FileTarget:
 class _HttpTarget:
     method = "PUT"
     name = "http"
+    keeps_encoding = False
 
     def __init__(self, url_template: str, auth: str | None = None, timeout_s: float = 30.0):
         self._url = url_template
@@ -161,7 +168,11 @@ class _HttpTarget:
 
 
 class HttpPutTarget(_HttpTarget):
-    """PUT to an S3-compatible presigned URL template or WebDAV (``{name}`` is replaced)."""
+    """PUT to a WebDAV or similar host that accepts a fixed ``Authorization`` header.
+
+    ``{name}`` in ``SDRSCAN_UPLINK_URL`` is replaced by the object name. Not for S3: a
+    presigned URL signs one object key and expires within 7 days; use the ``s3`` target.
+    """
 
     method = "PUT"
     name = "http_put"
@@ -174,14 +185,163 @@ class HttpPostTarget(_HttpTarget):
     name = "http_post"
 
 
+def sign_v4(
+    *,
+    method: str,
+    path: str,
+    headers: dict[str, str],
+    payload_sha256: str,
+    access_key: str,
+    secret_key: str,
+    region: str,
+    service: str = "s3",
+    query: str = "",
+) -> str:
+    """The AWS Signature Version 4 ``Authorization`` value for one request.
+
+    ``headers`` are the signed headers with lower-case names, and must include ``host``
+    and ``x-amz-date``. ``path`` is already URI-encoded.
+    """
+    amz_date = headers["x-amz-date"]
+    names = sorted(headers)
+    canonical = "\n".join(
+        [
+            method,
+            path,
+            query,
+            *(f"{k}:{' '.join(headers[k].split())}" for k in names),
+            "",
+            ";".join(names),
+            payload_sha256,
+        ]
+    )
+    scope = f"{amz_date[:8]}/{region}/{service}/aws4_request"
+    to_sign = "\n".join(
+        ["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical.encode()).hexdigest()]
+    )
+    key = ("AWS4" + secret_key).encode()
+    for part in (amz_date[:8], region, service, "aws4_request"):
+        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+    sig = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    return (
+        f"AWS4-HMAC-SHA256 Credential={access_key}/{scope},"
+        f"SignedHeaders={';'.join(names)},Signature={sig}"
+    )
+
+
+S3_KEYS = (
+    "SDRSCAN_S3_ENDPOINT",
+    "SDRSCAN_S3_BUCKET",
+    "SDRSCAN_S3_ACCESS_KEY",
+    "SDRSCAN_S3_SECRET_KEY",
+)
+
+
+class S3Target(_HttpTarget):
+    """PUT objects to an S3-compatible bucket, signed in process with SigV4.
+
+    Long-lived keys scoped to one bucket prefix live in the secrets file; each request is
+    signed when it is sent, so nothing expires. Addressing is path style
+    (``{endpoint}/{bucket}/{prefix}/{name}``), which AWS, MinIO and Ceph accept. S3 stores
+    ``Content-Encoding`` and replays it, so gzipped objects reach browsers decoded.
+    Signing needs the rig clock within 15 minutes of real time.
+    """
+
+    method = "PUT"
+    name = "s3"
+    keeps_encoding = True
+
+    def __init__(
+        self,
+        endpoint: str,
+        bucket: str,
+        access_key: str,
+        secret_key: str,
+        *,
+        prefix: str = "",
+        region: str = "us-east-1",
+        timeout_s: float = 30.0,
+        now: typing.Callable[[], float] = time.time,
+    ) -> None:
+        super().__init__(endpoint.rstrip("/"), None, timeout_s)
+        parts = urllib.parse.urlsplit(self._url)
+        self._host = parts.netloc
+        self._origin = f"{parts.scheme}://{parts.netloc}"
+        self._base_path = parts.path.rstrip("/")
+        self.bucket = bucket
+        self.prefix = prefix.strip("/")
+        self.region = region
+        self._access = access_key
+        self._secret = secret_key
+        self._now = now
+
+    @classmethod
+    def from_secrets(cls, secrets: dict[str, str], **kw) -> S3Target:
+        missing = [k for k in S3_KEYS if not secrets.get(k)]
+        if missing:
+            raise ValueError(f"{', '.join(missing)} missing from the uplink secrets file")
+        return cls(
+            secrets["SDRSCAN_S3_ENDPOINT"],
+            secrets["SDRSCAN_S3_BUCKET"],
+            secrets["SDRSCAN_S3_ACCESS_KEY"],
+            secrets["SDRSCAN_S3_SECRET_KEY"],
+            prefix=secrets.get("SDRSCAN_S3_PREFIX", ""),
+            region=secrets.get("SDRSCAN_S3_REGION") or "us-east-1",
+            **kw,
+        )
+
+    def signed_request(
+        self, method: str, path: str, body: bytes, extra: dict[str, str]
+    ) -> urllib.request.Request:
+        """A signed request for ``path`` (``/bucket/key``, not yet encoded)."""
+        enc_path = urllib.parse.quote(self._base_path + path, safe="/")
+        payload = hashlib.sha256(body).hexdigest()
+        amz_date = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(self._now()))
+        signed = {
+            "host": self._host,
+            "x-amz-content-sha256": payload,
+            "x-amz-date": amz_date,
+            **{k.lower(): v for k, v in extra.items()},
+        }
+        auth = sign_v4(
+            method=method,
+            path=enc_path,
+            headers=signed,
+            payload_sha256=payload,
+            access_key=self._access,
+            secret_key=self._secret,
+            region=self.region,
+        )
+        headers = {**signed, "Authorization": auth}
+        if method in ("PUT", "POST"):
+            headers["Content-Length"] = str(len(body))
+        data = body if method in ("PUT", "POST") else None
+        return urllib.request.Request(
+            self._origin + enc_path, data=data, headers=headers, method=method
+        )
+
+    def _request(self, name: str, body: bytes, content_type: str, encoding: str | None):
+        key = "/".join(p for p in (self.prefix, name) if p)
+        extra = {"content-type": content_type}
+        if encoding:
+            extra["content-encoding"] = encoding
+        return self.signed_request("PUT", f"/{self.bucket}/{key}", body, extra)
+
+
+TARGETS: dict[str, type[_HttpTarget]] = {
+    "http_put": HttpPutTarget,
+    "http_post": HttpPostTarget,
+    "s3": S3Target,
+}
+
+
 def make_target(cfg: UplinkConfig) -> Target:
     if cfg.target == "file":
         if cfg.path is None:
             raise ValueError("uplink.path is required for the file target")
         return FileTarget(cfg.path)
     secrets = load_secrets(cfg.secrets_env)
-    cls = HttpPutTarget if cfg.target == "http_put" else HttpPostTarget
-    return cls.from_secrets(secrets)
+    return TARGETS[cfg.target].from_secrets(secrets)
 
 
 class Ledger:
@@ -293,12 +453,12 @@ class DigestPublisher:
             if self.ledger.state() == "capped":
                 break
             ctype = "text/html; charset=utf-8" if name.endswith(".html") else "application/json"
-            # Over the network the page travels gzipped and the host serves it with
-            # Content-Encoding: gzip; a local folder keeps the plain file.
-            if self.target.name == "file":
-                resp = self._send(name, body, ctype, None)
-            else:
+            # The page travels gzipped only to a host that stores Content-Encoding and
+            # replays it (S3); any other host would serve the gzip bytes as HTML.
+            if getattr(self.target, "keeps_encoding", False):
                 resp = self._send(name, gzip.compress(body, 9, mtime=0), ctype, "gzip")
+            else:
+                resp = self._send(name, body, ctype, None)
             if 200 <= resp.status < 300:
                 self.ledger.store.set_meta(key, digest)
                 self.ledger.store.db.commit()
