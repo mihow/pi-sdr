@@ -270,13 +270,15 @@ class LiveServer:
         self._write(h, status, headers, body, charged)
 
     def _write(self, h, status: int, headers: dict, body: bytes, charged: bool) -> None:
+        if h.command == "HEAD":
+            body = b""
+        if charged:  # before sending, so the ledger is current when the client sees the reply
+            out = len(body) + 17 + sum(len(k) + len(str(v)) + 4 for k, v in headers.items()) + 60
+            req = len(h.requestline) + sum(len(k) + len(v) + 4 for k, v in h.headers.items())
+            self.ledger.charge("live", out, req, status)
         h.send_response(status)
         for k, v in headers.items():
             h.send_header(k, v)
         h.end_headers()
-        if h.command != "HEAD":
+        if body:
             h.wfile.write(body)
-        if charged:
-            out = len(body) + 17 + sum(len(k) + len(str(v)) + 4 for k, v in headers.items()) + 60
-            req = len(h.requestline) + sum(len(k) + len(v) + 4 for k, v in h.headers.items())
-            self.ledger.charge("live", out, req, status)
