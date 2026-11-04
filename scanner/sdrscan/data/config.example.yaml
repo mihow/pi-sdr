@@ -1,0 +1,70 @@
+# Example sdrscan configuration. Every key shown here is the built-in default, so an
+# empty file behaves the same. Copy it to /etc/sdrscan/config.yaml and change what you need.
+# Secrets (upload URLs with signatures, passwords) never go here: put them in the env file
+# named by uplink.secrets_env (mode 0600).
+
+site_id: site
+data_root: /var/lib/sdrscan
+stage_root: /run/sdrscan       # tmpfs; partial recordings never touch the SD card
+# bandplan_path defaults to the packaged US band plan.
+labels_path: null              # optional local display names; never commit a site's file
+
+duty:
+  survey_min_share: 0.55
+  dwell_max_share: 0.40
+  calibrate_share: 0.05
+  survey_hop_s: 0.1
+  dwell_max_s: 60.0
+  dwell_cooldown_s: 30.0
+  dwell_block_s: 0.1
+  tier_a_revisit_s: 15.0
+  critical_hop_interval_s: 1.0
+
+detect:
+  threshold_db: 10.0           # offset above the per-hop floor; never an absolute level
+  fm_threshold_db: 15.0
+  nfft: 4096
+  navg: 50
+  crop_frac: 0.10
+  dc_mask_bins: 3
+  tune_offset_hz: 150000
+  min_width_hz: 1000.0
+  clip_level: 0.99
+  dwell_open_snr_db: 20.0
+  hang_s: 2.0
+  always_on_duty: 0.80
+
+quota:
+  clip_quota_bytes: 2147483648 # 2 GiB, about 550 h of 8 kbit/s Opus speech
+  per_channel_share: 0.10
+  free_evict_frac: 0.15
+  free_prune_frac: 0.12
+  free_pinned_frac: 0.10
+  free_stop_frac: 0.05
+  raw_retention_days: 90
+  min_clip_s: 1.5
+
+thermal:
+  hot_c: 70.0
+  very_hot_c: 78.0
+  critical_c: 82.0
+  hysteresis_c: 3.0
+  sample_interval_s: 30.0
+
+uplink:
+  target: file                 # file | http_put | http_post
+  url: null
+  path: null
+  secrets_env: null
+  cap_bytes: 30000000          # hard monthly cap, counted by the on-device ledger
+  interval_s: 3600.0
+  slow_interval_s: 10800.0
+  slow_frac: 0.80
+  tls_overhead_bytes: 6000
+  outbox_keep: 48
+  include_transcripts: false
+
+live:
+  enabled: false
+  bind_address: null           # read at install time; never committed
+  port: 8073

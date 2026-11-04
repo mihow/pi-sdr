@@ -1,0 +1,8 @@
+.venv/
+build/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+# The root .gitignore ignores data/ (image build output); packaged data is source.
+!sdrscan/data/
