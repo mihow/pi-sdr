@@ -76,7 +76,7 @@ audio{width:100%;margin-top:6px}
 <script>
 (function(){
 "use strict";
-var MODE="__MODE__",URL_="__DIGEST_URL__",D=null,win="day",live=false;
+var MODE="__MODE__",URL_="__DIGEST_URL__",D=null,B=null,win="day",live=false;
 var W=[["now","Now"],["hour","Hour"],["day","Day"],["week","Week"],["all","All"]];
 function $(i){return document.getElementById(i)}
 function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
@@ -95,8 +95,11 @@ W.forEach(function(w){var b=el("button",null,w[1]);b.type="button";b.setAttribut
 function heat(s){var h=el("div","heat");h.setAttribute("aria-hidden","true");for(var i=0;i<s.length;i++){var c=el("i"),n=+s[i];if(n)c.style.background="rgba(var(--cell),"+(0.18+n*0.09).toFixed(2)+")";h.appendChild(c)}return h}
 function fill(id,items,f,empty){var u=$(id);u.textContent="";if(!items||!items.length){u.appendChild(el("li","empty",empty));return}items.forEach(function(x){u.appendChild(f(x))})}
 function chRow(c,max,right,sub){var li=el("li","ch"),a=el("div");a.appendChild(freq(c));a.appendChild(el("div","nm",name(c)));li.appendChild(a);var v=el("div","v",right);if(sub)v.appendChild(el("small",null,sub));li.appendChild(v);if(c.spark)li.appendChild(heat(c.spark));else if(max){var b=el("div","bar"),i=el("i");i.style.width=Math.max(2,100*c.active_s/max)+"%";b.appendChild(i);li.appendChild(b)}return li}
-function health(){var h=D.health||{},age=Date.now()/1000-D.generated_at,box=$("health"),f=$("facts");box.className="health"+(age>21600?" off":age>7200?" stale":"");
-$("age").textContent="Updated "+ago(D.generated_at)+(age>21600?". The rig may be offline.":age>7200?". This summary is late.":"");f.textContent="";
+function health(){var h=D.health||{},now=Date.now()/1000,age=now-D.generated_at,box=$("health"),f=$("facts");
+var iv=(h.uplink&&h.uplink.interval_s)||3600,late=Math.max(7200,2*iv),gone=Math.max(21600,3*iv),msg="Updated "+ago(D.generated_at);
+if(B&&B.generated_at>D.generated_at){age=now-B.generated_at;late=1.5*86400;gone=3*86400;msg="Data cap reached: hourly summaries resume next month. Last heartbeat "+ago(B.generated_at)+"; summary from "+ago(D.generated_at)}
+box.className="health"+(age>gone?" off":age>late?" stale":"");
+$("age").textContent=msg+(age>gone?". The rig may be offline.":age>late?". This summary is late.":".");f.textContent="";
 function fact(l,v,c){var li=el("li",c||"");li.appendChild(document.createTextNode(l+" "));li.appendChild(el("b",null,v));f.appendChild(li)}
 fact("Dongle",h.dongle===false?"missing":"OK",h.dongle===false?"x":"");
 if(h.temp_c!=null)fact("CPU",h.temp_c+" °C"+(h.mode&&h.mode!=="normal"?", "+h.mode.replace("_"," "):""),h.mode==="critical"?"x":h.mode&&h.mode!=="normal"?"w":"");
@@ -124,7 +127,8 @@ if(s.replace(/0/g,"")){for(var d=0;d<7;d++){how.appendChild(el("span",null,days[
 $("always-h").textContent="Always on and spurs ("+D.always_on.count+")";fill("always",D.always_on.list,function(a){return chRow(a,0,a.kind==="spur"?"spur":"carrier")},"None found.");
 $("prose-s").hidden=!D.prose;$("prose").textContent=D.prose||""}
 function parse(buf){var b=new Uint8Array(buf);if(b[0]===0x1f&&b[1]===0x8b){if(typeof DecompressionStream==="undefined")return Promise.reject(new Error("this browser cannot unpack the digest"));return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text().then(JSON.parse)}return Promise.resolve(JSON.parse(new TextDecoder().decode(b)))}
-function load(){$("refresh").disabled=true;fetch(URL_,{cache:"no-cache"}).then(function(r){if(!r.ok)throw new Error("the server answered "+r.status);return r.arrayBuffer()}).then(parse).then(function(d){D=d;render()}).catch(function(e){if(!D){$("health").className="health off";$("age").textContent="Could not load the summary: "+e.message+". Tap Refresh to try again."}}).then(function(){$("refresh").disabled=false})}
+function load(){$("refresh").disabled=true;fetch(URL_,{cache:"no-cache"}).then(function(r){if(!r.ok)throw new Error("the server answered "+r.status);return r.arrayBuffer()}).then(parse).then(function(d){D=d;render();beat()}).catch(function(e){if(!D){$("health").className="health off";$("age").textContent="Could not load the summary: "+e.message+". Tap Refresh to try again."}}).then(function(){$("refresh").disabled=false})}
+function beat(){var u=D&&D.health&&D.health.uplink;if(MODE==="live"||!u||(u.state!=="slow"&&u.state!=="capped"))return;fetch("beat.json",{cache:"no-cache"}).then(function(r){return r.ok?r.json():null}).then(function(b){if(b&&b.generated_at){B=b;render()}}).catch(function(){})}
 $("refresh").onclick=load;
 if(MODE==="live")fetch("healthz",{cache:"no-store"}).then(function(r){live=r.ok;render()}).catch(function(){});
 load();

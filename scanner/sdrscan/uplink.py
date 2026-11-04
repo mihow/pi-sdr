@@ -388,11 +388,19 @@ class Ledger:
             return "slow"
         return "ok"
 
+    def interval_s(self) -> float:
+        """Seconds between digest pushes in the current state (a beat per day when capped)."""
+        state = self.state()
+        if state == "capped":
+            return float(DAY)
+        return self.cfg.slow_interval_s if state == "slow" else self.cfg.interval_s
+
     def to_dict(self) -> dict:
         return {
             "month_bytes": self.month_bytes(),
             "cap_bytes": self.cfg.cap_bytes,
             "state": self.state(),
+            "interval_s": int(self.interval_s()),
         }
 
 

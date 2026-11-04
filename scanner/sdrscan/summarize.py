@@ -445,5 +445,7 @@ def _health(health: Health | dict | None, windows: dict, uplink: dict | None) ->
             "month_kb": int(math.ceil(uplink.get("month_bytes", 0) / 1000)),
             "cap_kb": int(uplink.get("cap_bytes", 0) // 1000),
             "state": uplink.get("state", "ok"),
+            # The page derives "late" and "offline" from the push interval.
+            "interval_s": int(uplink.get("interval_s", 3600)),
         }
     return h
