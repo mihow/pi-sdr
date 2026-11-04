@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:,">
+<title>Radio activity</title>
+<style>
+:root{--bg:#edf1f2;--sf:#fff;--ink:#1b2a33;--mu:#566872;--ln:#d3dcdf;--ac:#0d7377;--ok:#2e7d4f;--warn:#a35f00;--bad:#b3261e;--cell:13,115,119}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f1b23;--sf:#162630;--ink:#e3ebee;--mu:#93a6b0;--ln:#273a45;--ac:#5cc8cc;--ok:#7bd19c;--warn:#e7a54a;--bad:#ff8a80;--cell:92,200,204}}
+:root[data-theme=dark]{--bg:#0f1b23;--sf:#162630;--ink:#e3ebee;--mu:#93a6b0;--ln:#273a45;--ac:#5cc8cc;--ok:#7bd19c;--warn:#e7a54a;--bad:#ff8a80;--cell:92,200,204}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;padding:env(safe-area-inset-top) max(16px,env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+main{max-width:1080px;margin:0 auto}
+header{display:flex;align-items:center;gap:8px;padding:12px 0 4px;flex-wrap:wrap}
+h1{font-size:1.25rem;margin:0;flex:1 1 auto;font-weight:650;letter-spacing:-.01em}
+h2{font-size:1.02rem;margin:0 0 8px;font-weight:650}
+button{font:inherit;color:inherit;min-height:44px;min-width:44px;border:1px solid var(--ln);background:var(--sf);border-radius:10px;padding:0 14px;cursor:pointer}
+button:focus-visible,summary:focus-visible{outline:3px solid var(--ac);outline-offset:2px}
+.health{background:var(--sf);border-radius:14px;padding:12px 14px;margin:8px 0 12px;border-left:6px solid var(--ok)}
+.health.stale{border-left-color:var(--warn)}.health.off{border-left-color:var(--bad)}
+.age{font-size:1.05rem;font-weight:600;margin:0 0 6px}
+.facts{display:flex;flex-wrap:wrap;gap:4px 14px;margin:0;padding:0;list-style:none;color:var(--mu);font-size:.92rem}
+.facts b{color:var(--ink);font-weight:600}.facts .w b{color:var(--warn)}.facts .x b{color:var(--bad)}
+.tabs{display:flex;gap:4px;background:var(--sf);border-radius:12px;padding:4px;margin:0 0 12px}
+.tabs button{flex:1 1 0;border:0;background:none;padding:0 4px}
+.tabs button[aria-selected=true]{background:var(--ac);color:var(--bg);font-weight:650}
+.grid{display:grid;gap:12px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:720px){.grid{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}.wide{grid-column:1/-1}}
+section{background:var(--sf);border-radius:14px;padding:12px 14px;min-width:0}
+.note{color:var(--mu);font-size:.9rem;margin:2px 0 0}
+ol,ul.rows{list-style:none;margin:0;padding:0}
+.ch{padding:9px 0;border-top:1px solid var(--ln);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:baseline}
+.ch:first-child{border-top:0}
+.ch.st{grid-template-columns:minmax(0,1fr)}.ch.st .v{text-align:left;white-space:normal;font-weight:400}
+.fq{font-size:1.32rem;font-weight:650;letter-spacing:-.02em;overflow-wrap:anywhere}
+.fq small{font-size:.7rem;font-weight:500;color:var(--mu);margin-left:2px}
+.nm{color:var(--mu);font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.v{text-align:right;font-weight:600;white-space:nowrap}
+.v small{display:block;font-weight:400;color:var(--mu);font-size:.8rem}
+.heat{grid-column:1/-1;display:flex;gap:2px;height:14px;margin-top:4px}
+.heat i{flex:1 1 0;border-radius:2px;background:rgba(var(--cell),.08)}
+.bar{grid-column:1/-1;height:6px;border-radius:3px;background:rgba(var(--cell),.12);margin-top:6px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ac)}
+.tag{display:inline-block;font-size:.78rem;padding:0 7px;border-radius:9px;border:1px solid var(--ln);color:var(--mu);margin-left:6px;vertical-align:2px}
+.tx{padding:8px 0;border-top:1px solid var(--ln)}.tx:first-child{border-top:0}
+.tx p{margin:4px 0 0;overflow-wrap:anywhere}
+.tx .row{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.tx .row .fq{font-size:1.05rem}
+details summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:650}
+.how{display:grid;grid-template-columns:2.2em repeat(24,minmax(0,1fr));gap:2px;font-size:.72rem;color:var(--mu);align-items:center}
+.how i{height:12px;border-radius:2px;background:rgba(var(--cell),.08)}
+.empty{color:var(--mu);margin:4px 0}
+.prose{font-size:.95rem;margin:0}
+audio{width:100%;margin-top:6px}
+@media (prefers-reduced-motion:no-preference){.tabs button{transition:background .15s}}
+</style>
+</head>
+<body>
+<main>
+<header><h1 id="site">Radio activity</h1><button id="refresh" type="button">Refresh</button><button id="theme" type="button" aria-label="Switch theme">Auto</button></header>
+<div class="health" id="health" aria-live="polite"><p class="age" id="age">Loading the latest summary…</p><ul class="facts" id="facts"></ul></div>
+<div class="tabs" role="tablist" id="tabs"></div>
+<div class="grid">
+<section><h2 id="busy-h">Busiest channels</h2><ol id="busy"></ol><p class="note" id="busy-note"></p></section>
+<section><h2>New and unusual</h2><ul class="rows" id="news"></ul><h2 style="margin-top:14px">Quieter than usual</h2><ul class="rows" id="quiet"></ul></section>
+<section><h2>Bands by occupancy</h2><ul class="rows" id="bands"></ul></section>
+<section id="prose-s" hidden><h2>Summary</h2><p class="prose" id="prose"></p><p class="note">Written by an on-device language model from the figures on this page.</p></section>
+<section class="wide"><h2>Recent transmissions</h2><ul class="rows" id="recent"></ul></section>
+<section class="wide"><h2>Typical week</h2><div class="how" id="how"></div><p class="note" id="how-note"></p></section>
+<section class="wide"><details><summary id="always-h">Always on and spurs</summary><ul class="rows" id="always"></ul></details></section>
+</div>
+</main>
+<script>
+(function(){
+"use strict";
+var MODE="__MODE__",URL_="__DIGEST_URL__",D=null,win="day",live=false;
+var W=[["now","Now"],["hour","Hour"],["day","Day"],["week","Week"],["all","All"]];
+function $(i){return document.getElementById(i)}
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function mhz(hz){var s=(hz/1e6).toFixed(4);return s.replace(/0$/,"")}
+function dur(s){s=Math.round(s);if(s<60)return s+" s";if(s<3600)return Math.round(s/60)+" min";return (s/3600).toFixed(s<36000?1:0)+" h"}
+function ago(t){var s=Date.now()/1000-t;if(s<90)return "just now";if(s<5400)return Math.round(s/60)+" min ago";if(s<172800)return Math.round(s/3600)+" h ago";return Math.round(s/86400)+" days ago"}
+function hm(t){return new Date(t*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}
+function band(c){var b=(D.band_names||{})[c.band];return b||c.band||""}
+function name(c){var l=(D.labels||{})[c.hz];return l?l+" · "+band(c):band(c)}
+function freq(c){var f=el("div","fq",mhz(c.hz));f.appendChild(el("small",null,"MHz"));return f}
+function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
+function theme(m){var r=document.documentElement;if(m==="auto")r.removeAttribute("data-theme");else r.setAttribute("data-theme",m);$("theme").textContent=m[0].toUpperCase()+m.slice(1);store("sdrscan-theme",m)}
+$("theme").onclick=function(){var m=store("sdrscan-theme")||"auto";theme({auto:"light",light:"dark",dark:"auto"}[m]||"auto")};
+theme(store("sdrscan-theme")||"auto");
+W.forEach(function(w){var b=el("button",null,w[1]);b.type="button";b.setAttribute("role","tab");b.id="tab-"+w[0];b.onclick=function(){win=w[0];render()};$("tabs").appendChild(b)});
+function heat(s){var h=el("div","heat");h.setAttribute("aria-hidden","true");for(var i=0;i<s.length;i++){var c=el("i"),n=+s[i];if(n)c.style.background="rgba(var(--cell),"+(0.18+n*0.09).toFixed(2)+")";h.appendChild(c)}return h}
+function fill(id,items,f,empty){var u=$(id);u.textContent="";if(!items||!items.length){u.appendChild(el("li","empty",empty));return}items.forEach(function(x){u.appendChild(f(x))})}
+function chRow(c,max,right,sub){var li=el("li","ch"),a=el("div");a.appendChild(freq(c));a.appendChild(el("div","nm",name(c)));li.appendChild(a);var v=el("div","v",right);if(sub)v.appendChild(el("small",null,sub));li.appendChild(v);if(c.spark)li.appendChild(heat(c.spark));else if(max){var b=el("div","bar"),i=el("i");i.style.width=Math.max(2,100*c.active_s/max)+"%";b.appendChild(i);li.appendChild(b)}return li}
+function health(){var h=D.health||{},age=Date.now()/1000-D.generated_at,box=$("health"),f=$("facts");box.className="health"+(age>21600?" off":age>7200?" stale":"");
+$("age").textContent="Updated "+ago(D.generated_at)+(age>21600?". The rig may be offline.":age>7200?". This summary is late.":"");f.textContent="";
+function fact(l,v,c){var li=el("li",c||"");li.appendChild(document.createTextNode(l+" "));li.appendChild(el("b",null,v));f.appendChild(li)}
+fact("Dongle",h.dongle===false?"missing":"OK",h.dongle===false?"x":"");
+if(h.temp_c!=null)fact("CPU",h.temp_c+" °C"+(h.mode&&h.mode!=="normal"?", "+h.mode.replace("_"," "):""),h.mode==="critical"?"x":h.mode&&h.mode!=="normal"?"w":"");
+if(h.disk_free_pct!=null)fact("Disk free",h.disk_free_pct+"%",h.disk_free_pct<15?"x":"");
+if(h.quota_used_mb!=null)fact("Clips",Math.round(h.quota_used_mb)+" of "+Math.round(h.quota_mb)+" MB");
+if(h.uplink)fact("Data this month",(h.uplink.month_kb/1000).toFixed(1)+" of "+Math.round(h.uplink.cap_kb/1000)+" MB",h.uplink.state==="capped"?"x":h.uplink.state==="slow"?"w":"");
+if(h.coverage_pct!=null)fact("Coverage",Math.round(h.coverage_pct)+"%",h.coverage_pct<80?"w":"");
+if(h.up_s!=null)fact("Up",dur(h.up_s));
+(h.flags||[]).forEach(function(x){fact("Alert",x.replace(/_/g," "),"x")})}
+function render(){if(!D)return;health();$("site").textContent=D.site&&D.site!=="site"?D.site+" radio":"Radio activity";
+W.forEach(function(w){$("tab-"+w[0]).setAttribute("aria-selected",String(w[0]===win))});
+var lab={now:"Heard in the last 5 minutes",hour:"Busiest in the last hour",day:"Busiest in the last 24 hours",week:"Busiest this week",all:"Busiest of all time"};$("busy-h").textContent=lab[win];
+if(win==="now"){fill("busy",D.now.active,function(c){return chRow(c,0,ago(D.generated_at-(c.age_s||0)),c.snr!=null?c.snr+" dB":"")},"Nothing heard in the 5 minutes before this summary.");$("busy-note").textContent="As of "+hm(D.generated_at)+"."}
+else{var w=D.windows[win],max=w.top.length?w.top[0].active_s:0;fill("busy",w.top,function(c){return chRow(c,max,dur(c.active_s),c.tx+" tx"+(c.voice?", "+c.voice+" voice":""))},"No activity in this window.");
+$("busy-note").textContent=w.channels+" channels active"+(w.coverage_pct!=null?", "+Math.round(w.coverage_pct)+"% of planned sweeps done":"")+(w.cell_s?". Each cell is "+dur(w.cell_s)+".":".")}
+var news=[];(D.new||[]).forEach(function(n){news.push([n,"New","first heard "+ago(n.first_ts)+", "+n.tx+" tx"])});(D.unusual||[]).forEach(function(u){news.push([u,"Busy",dur(u.active_s)+" at "+hm(u.hour)+", usually "+dur(u.usual_s)])});
+fill("news",news,function(x){var li=chRow(x[0],0,"",x[2]);li.className="ch st";li.querySelector(".fq").appendChild(el("span","tag",x[1]));return li},"Nothing new or unusual in the last 24 hours.");
+fill("quiet",D.quiet,function(q){var li=chRow(q,0,"",q.silent_h+" h silent, usually busy then");li.className="ch st";return li},"Every regular channel is behaving normally.");
+var bw=win==="now"?"hour":win;fill("bands",D.windows[bw].bands,function(b){var li=el("li","ch"),a=el("div");a.appendChild(el("div",null,(D.band_names||{})[b.band]||b.band));li.appendChild(a);li.appendChild(el("div","v",b.occ_pct+"%"));var br=el("div","bar"),i=el("i");i.style.width=Math.min(100,b.occ_pct)+"%";br.appendChild(i);li.appendChild(br);return li},"No band data yet.");
+fill("recent",D.recent,function(t){var li=el("li","tx"),r=el("div","row");r.appendChild(freq(t));r.appendChild(el("span","nm",hm(t.t)+", "+dur(t.dur_s)+", "+t.cls+" · "+band(t)));li.appendChild(r);if(t.text){var p=el("p",null,"“"+t.text+"”");p.appendChild(el("span","tag",Math.round(t.conf*100)+"% sure"));li.appendChild(p)}
+if(live&&t.clip){var b=el("button",null,"Play clip");b.type="button";b.onclick=function(){var a=el("audio");a.controls=true;a.src="clip/"+t.clip+".opus";li.replaceChild(a,b);a.play().catch(function(){})};li.appendChild(b)}return li},"No transmissions in the last 24 hours.");
+var how=$("how");how.textContent="";var off=-Math.round(new Date().getTimezoneOffset()/60),days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],s=D.how||"";
+if(s.replace(/0/g,"")){for(var d=0;d<7;d++){how.appendChild(el("span",null,days[d]));for(var h=0;h<24;h++){var u=((d*24+h-off)%168+168)%168,n=+s[u],c=el("i");if(n)c.style.background="rgba(var(--cell),"+(0.15+n*0.09).toFixed(2)+")";how.appendChild(c)}}$("how-note").textContent="Activity by hour of the week in your time zone, 00:00 to 23:00. Stronger colour means busier."}else $("how-note").textContent="Builds up after the first week.";
+$("always-h").textContent="Always on and spurs ("+D.always_on.count+")";fill("always",D.always_on.list,function(a){return chRow(a,0,a.kind==="spur"?"spur":"carrier")},"None found.");
+$("prose-s").hidden=!D.prose;$("prose").textContent=D.prose||""}
+function parse(buf){var b=new Uint8Array(buf);if(b[0]===0x1f&&b[1]===0x8b){if(typeof DecompressionStream==="undefined")return Promise.reject(new Error("this browser cannot unpack the digest"));return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text().then(JSON.parse)}return Promise.resolve(JSON.parse(new TextDecoder().decode(b)))}
+function load(){$("refresh").disabled=true;fetch(URL_,{cache:"no-cache"}).then(function(r){if(!r.ok)throw new Error("the server answered "+r.status);return r.arrayBuffer()}).then(parse).then(function(d){D=d;render()}).catch(function(e){if(!D){$("health").className="health off";$("age").textContent="Could not load the summary: "+e.message+". Tap Refresh to try again."}}).then(function(){$("refresh").disabled=false})}
+$("refresh").onclick=load;
+if(MODE==="live")fetch("healthz",{cache:"no-store"}).then(function(r){live=r.ok;render()}).catch(function(){});
+load();
+})();
+</script>
+</body>
+</html>

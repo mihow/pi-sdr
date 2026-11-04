@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import sqlite3
 import statistics
+import threading
 import uuid
 from pathlib import Path
 
@@ -104,6 +105,8 @@ class Store:
         self._last_flush = clock.monotonic()
         self._next_id: dict[str, int] = {}
         self._hours: dict[int, _HourAcc] = {}
+        # The live server's threads charge the ledger while the scan loop writes.
+        self.lock = threading.RLock()
 
     @classmethod
     def open(cls, path: Path, clock: Clock, **kw) -> Store:
@@ -142,9 +145,10 @@ class Store:
 
     # -- writes (batched) --------------------------------------------------------------
     def _queue(self, sql: str, params: tuple) -> None:
-        self._pending.append((sql, params))
-        if self.clock.monotonic() - self._last_flush >= self.batch_s:
-            self.flush()
+        with self.lock:
+            self._pending.append((sql, params))
+            if self.clock.monotonic() - self._last_flush >= self.batch_s:
+                self.flush()
 
     def defer(self, sql: str, params: tuple) -> None:
         """Queue a write with the batch (rollups use it, so they commit with their rows)."""
@@ -329,13 +333,14 @@ class Store:
         )
 
     def flush(self) -> None:
-        pending, self._pending = self._pending, []
-        with self.db:
-            # Hour rows first, so a queued coverage update finds its rows.
-            self._write_hours()
-            for sql, params in pending:
-                self.db.execute(sql, params)
-        self._last_flush = self.clock.monotonic()
+        with self.lock:
+            pending, self._pending = self._pending, []
+            with self.db:
+                # Hour rows first, so a queued coverage update finds its rows.
+                self._write_hours()
+                for sql, params in pending:
+                    self.db.execute(sql, params)
+            self._last_flush = self.clock.monotonic()
 
     def prune(self, now: float) -> None:
         """Drop raw rows past retention. Day rollups, totals and profiles are kept forever."""
