@@ -1,7 +1,7 @@
 # sdrscan image for the Raspberry Pi 5 (linux/arm64), built on an x86 host with
 #   docker buildx build --platform linux/arm64 --target test -t sdrscan:arm64-test --load .
-# Part A checkpoint version: enough to prove the package installs and its tests pass on
-# aarch64 under qemu. Plan task B9 completes the runtime stage (healthcheck, entrypoint).
+# Stages: wheels (compiles webrtcvad, which has no aarch64 wheel), base, test, runtime.
+#   docker buildx build --platform linux/arm64 --target runtime -t sdrscan:arm64 --load .
 
 ARG DEBIAN=debian:trixie-slim
 
@@ -36,9 +36,22 @@ FROM base AS test
 RUN apt-get update && apt-get install -y --no-install-recommends python3-pytest \
  && rm -rf /var/lib/apt/lists/*
 COPY tests ./tests
+COPY deploy ./deploy
+# Under qemu everything runs 20 to 40 times slower; wall-clock budget asserts are skipped.
+ENV SDRSCAN_SLOW_HOST=1
 CMD ["python", "-m", "pytest", "-q", "-m", "not slow and not browser and not fixtures and not hw"]
 
 FROM base AS runtime
-RUN useradd --system --home /var/lib/sdrscan --shell /usr/sbin/nologin sdrscan
+# Runs as a system user. The host passes the dongle with --device and adds the group that
+# owns it (plugdev on Raspberry Pi OS) with --group-add; see deploy/sdrscan.service.
+RUN useradd --system --home /var/lib/sdrscan --shell /usr/sbin/nologin sdrscan \
+ && mkdir -p /var/lib/sdrscan /run/sdrscan /etc/sdrscan \
+ && chown sdrscan:sdrscan /var/lib/sdrscan /run/sdrscan \
+ && rm -rf /src
+WORKDIR /var/lib/sdrscan
 USER sdrscan
-ENTRYPOINT ["tini", "--", "python", "-c", "import sdrscan; print('sdrscan', sdrscan.__version__)"]
+VOLUME ["/var/lib/sdrscan"]
+HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
+  CMD ["sdrscan", "health", "--max-age-s", "180"]
+ENTRYPOINT ["tini", "--", "sdrscan"]
+CMD ["run", "--config", "/etc/sdrscan/config.yaml", "--source", "rtl"]

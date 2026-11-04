@@ -16,6 +16,7 @@ from sdrscan.cli import main
 
 SCENES = Path(__file__).parent / "scenes"
 ROOT = Path(__file__).resolve().parents[1]
+SLOW = 10 if os.environ.get("SDRSCAN_SLOW_HOST") else 1  # qemu runs far slower
 
 
 def test_simulate_writes_db_digest_and_page(tmp_path, capsys):
@@ -35,7 +36,8 @@ def test_simulate_writes_db_digest_and_page(tmp_path, capsys):
         )
         == 0
     )
-    assert time.monotonic() - t0 < 30
+    if not os.environ.get("SDRSCAN_SLOW_HOST"):  # set in the qemu test image
+        assert time.monotonic() - t0 < 30
     report = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert (out / "scan.sqlite").exists() and (out / "index.html").exists()
     d = json.loads(gzip.decompress((out / "digest.json.gz").read_bytes()))
@@ -108,12 +110,12 @@ def test_run_synthetic_exits_cleanly_on_sigterm(tmp_path, sys_root):
         env={**os.environ, "PYTHONPATH": str(ROOT)},
     )
     db = tmp_path / "data" / "db" / "scan.sqlite"
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + 30 * SLOW
     while not db.exists() and time.monotonic() < deadline:
         time.sleep(0.2)
-    time.sleep(2.0)
+    time.sleep(2.0 * SLOW)
     proc.send_signal(signal.SIGTERM)
-    out, _ = proc.communicate(timeout=30)
+    out, _ = proc.communicate(timeout=30 * SLOW)
     assert proc.returncode == 0, out.decode()[-2000:]
     rows = sqlite3.connect(db).execute("SELECT COUNT(*) FROM health").fetchone()[0]
     assert rows >= 1, "the store was flushed on the way out"
