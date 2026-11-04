@@ -605,7 +605,11 @@ Image: `debian:trixie-slim`, arm64.
 - apt: `python3`, `python3-numpy`, `python3-scipy`, `librtlsdr2` (trixie 2.0.x, V4 support),
   `rtl-sdr` (for `rtl_test`), `opus-tools`, `tini`.
 - venv with system site packages: `pyrtlsdr`, `webrtcvad`, `pyyaml`.
-- Target size under 300 MB, measured with `docker image ls` after the build. If the trixie
+- whisper.cpp is not packaged in Debian, so a builder stage compiles a static
+  `whisper-cli` (pinned tag and checksum, armv8.2-a with dotprod and fp16, no OpenMP) and
+  adds the `ggml-base.en-q5_1` model (about 60 MB, pinned by checksum).
+- Target size under 300 MB, measured with `docker image ls` after the build. With
+  whisper.cpp and its model the runtime image measures 363 MB. If the trixie
   librtlsdr shows V4 problems on real hardware, build the rtl-sdr-blog fork from a pinned
   commit in a builder stage (use `make -j1` under qemu).
 - Built on the x86 host with `docker buildx --platform linux/arm64` and exported as a zstd

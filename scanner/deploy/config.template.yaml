@@ -24,4 +24,7 @@ live:
   port: 8073
 
 stt:
-  engine: none
+  engine: whisper_cpp          # whisper-cli and the model are built into the image
+  binary: /usr/local/bin/whisper-cli
+  model: /usr/share/sdrscan/models/ggml-base.en-q5_1.bin
+  threads: 2                   # paused automatically when the rig runs hot

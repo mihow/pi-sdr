@@ -85,10 +85,24 @@ def test_make_stt_respects_config_and_mode(tmp_path):
 
 
 @pytest.mark.skipif(not os.environ.get("SDRSCAN_WHISPER_BIN"), reason="SDRSCAN_WHISPER_BIN unset")
-def test_live_whisper_binary_runs(tmp_path):  # pragma: no cover - needs a local build
+def test_live_whisper_binary_transcribes_real_speech(tmp_path):  # pragma: no cover - image
+    """Runs the real whisper-cli and model (the arm64 test image sets these variables).
+    With SDRSCAN_WHISPER_SAMPLE (whisper.cpp's jfk.wav) the words must come back."""
+    import wave
+
     stt = WhisperCppStt(
         Path(os.environ["SDRSCAN_WHISPER_BIN"]),
         Path(os.environ["SDRSCAN_WHISPER_MODEL"]),
         work_dir=tmp_path,
+        timeout_s=1800.0,  # qemu is 20 to 40 times slower than the Pi
     )
-    assert stt.transcribe(voice(2.0)) is not None
+    sample = os.environ.get("SDRSCAN_WHISPER_SAMPLE")
+    if not sample:
+        assert stt.transcribe(voice(2.0)) is not None
+        return
+    with wave.open(sample) as w:
+        assert w.getframerate() == 16_000 and w.getnchannels() == 1
+        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16) / 32768.0
+    tr = stt.transcribe(pcm)
+    assert tr is not None and "ask not what your country" in tr.text.lower(), tr
+    assert tr.confidence > 0.5

@@ -17,7 +17,10 @@ Plan: [`docs/superpowers/plans/2026-11-03-sdr-scanner.md`](../docs/superpowers/p
    transmissions, keyed by integer Hz.
 3. During a dwell, each channel is demodulated to 16 kHz audio. The voice gate classifies it
    as voice, data or noise. A voice transmission of at least 1.5 s keeps an 8 kbit/s Opus clip.
-4. Optional speech-to-text (whisper.cpp) turns kept clips into short transcripts.
+4. Speech-to-text (whisper.cpp `whisper-cli` with the `base.en` q5_1 model, built into the
+   image) turns kept clips into short transcripts at nice 19, and pauses when the rig runs
+   hot. Transcripts show on the rig's live page. They go into the off-site digest only with
+   `uplink.include_transcripts: true`, because the off-site page is publicly readable.
 5. Hour, day and all-time rollups feed a rule-based digest: busiest channels, new, unusual
    and quiet channels, bands, recent transmissions and rig health.
 6. The digest goes off site once an hour, within a monthly byte cap.
@@ -111,3 +114,6 @@ These need the real rig:
 5. Voice gate thresholds on real radio audio; they come from v1 and are untuned.
 6. Speech-to-text real-time factor at 2 threads, and SoC temperature on a hot afternoon.
 7. Ogg Opus clip playback in iOS Safari.
+8. Speech-to-text speed and accuracy on real radio audio. Under qemu on the build host,
+   `whisper-cli` transcribed the 11 s `jfk.wav` sample correctly in about 2 minutes; the Pi
+   is expected to be 20 to 40 times faster than qemu.
