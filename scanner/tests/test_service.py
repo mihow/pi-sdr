@@ -56,3 +56,74 @@ def test_an_unconfigured_uplink_disables_pushes_but_the_scanner_runs(
     assert svc.last_digest["health"]["uplink"]["state"] == "unconfigured"
     assert "uplink_unconfigured" in svc.last_digest["health"]["flags"]
     svc.shutdown()
+
+
+DAY = 86400
+GMRS = 462_562_500
+BURSTY = """
+seed: 1
+emitters:
+  - {kind: nfm_voice, hz: 462_562_500, level_db: -40, bursts: [[60, 40], [400, 40]]}
+"""
+
+
+def _plain_cfg(tmp_path):
+    from sdrscan.config import Config
+
+    return Config(data_root=tmp_path / "data", stage_root=tmp_path / "stage")
+
+
+def _scene_service(cfg, vclock, sys_root, scene: str = BURSTY) -> Service:
+    src = SyntheticSource(Scene.from_yaml(scene, vclock), vclock)
+    return Service(cfg, vclock, src, spectrum="psd", statvfs=FakeFs(0.5), sys_root=sys_root)
+
+
+def test_a_day_the_service_was_down_at_midnight_still_reaches_week_and_all(
+    tmp_path, vclock, sys_root
+):
+    """The day rollup used to run only when the service itself crossed midnight. A rig that
+    stopped at 22:30 and came back at 01:10 lost that day from the week and all-time
+    views for good."""
+    from sdrscan import rollup
+
+    day0 = vclock.now()
+    vclock.set(day0 + 22 * 3600)
+    cfg = _plain_cfg(tmp_path)
+    svc = _scene_service(cfg, vclock, sys_root)
+    svc.run(until=vclock.now() + 1800)
+    svc.shutdown()
+    vclock.set(day0 + DAY + 3600 + 600)  # down over midnight
+    svc = _scene_service(cfg, vclock, sys_root, scene="emitters: []\n")
+    now = vclock.now()
+    week = rollup.query_window(svc.store, "week", now)
+    every = rollup.query_window(svc.store, "all", now)
+    assert GMRS in week.channels and week.channels[GMRS].tx_count >= 2
+    assert GMRS in every.channels and every.channels[GMRS].tx_count >= 2
+    assert int(svc.store.meta("rolled_through")) == day0 + DAY
+    svc.shutdown()
+
+
+def test_an_hour_cut_short_by_a_restart_is_rebuilt_from_raw_rows(tmp_path, vclock, sys_root):
+    """Hours the service never finished (it stopped mid-hour) are recomputed on start."""
+    from sdrscan import rollup
+
+    day0 = vclock.now()
+    vclock.set(day0 + 10 * 3600)
+    cfg = _plain_cfg(tmp_path)
+    svc = _scene_service(cfg, vclock, sys_root)
+    svc.run(until=vclock.now() + 1200)
+    svc.shutdown()
+    hour = rollup.hour_of(day0 + 10 * 3600)
+    import sqlite3
+
+    db = sqlite3.connect(tmp_path / "data" / "db" / "scan.sqlite")
+    with db:
+        db.execute("DELETE FROM rollup_hour WHERE hour_ts = ?", (hour,))  # a lost batch
+    db.close()
+    vclock.set(day0 + 13 * 3600)
+    svc = _scene_service(cfg, vclock, sys_root, scene="emitters: []\n")
+    n = svc.store.db.execute(
+        "SELECT tx_count FROM rollup_hour WHERE hour_ts = ? AND hz = ?", (hour, GMRS)
+    ).fetchone()
+    assert n is not None and n[0] >= 2
+    svc.shutdown()

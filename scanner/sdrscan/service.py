@@ -48,6 +48,7 @@ STT_MAX_S = 30.0
 HOUR_GRACE_S = 5.0  # let transmissions that end on the boundary close first
 WATCHDOG_S = 120.0
 WATCHDOG_EXIT = 70
+CATCH_UP_MAX_S = 7 * 86400  # unfinished hours older than this are left as they are
 
 
 class Service:
@@ -129,6 +130,7 @@ class Service:
         self._stt_thread: threading.Thread | None = None
         self._next_health = clock.now()
         self._hour = rollup.hour_of(clock.now())
+        self._catch_up()
         self.last_digest: dict | None = None
         self._progress = clock.monotonic()
         self.digests = 0
@@ -188,9 +190,37 @@ class Service:
         self.store.flush()
         rollup.recompute_hour(self.store, hour_ts)
         rollup.update_profiles(self.store, hour_ts)
-        if rollup.day_of(hour_ts + rollup.H) > rollup.day_of(hour_ts):
-            rollup.rollup_day(self.store, rollup.day_of(hour_ts))
+        self._set_hours_through(hour_ts + rollup.H)
+        self._roll_days(rollup.day_of(hour_ts + rollup.H))
         self.publish_digest()
+
+    def _catch_up(self) -> None:
+        """Finish what downtime left open: hours the service never closed, and every
+        whole day since ``rolled_through`` (a rig that is down at midnight would otherwise
+        lose that day from the week and all-time views)."""
+        self.store.flush()
+        cur = self._hour
+        done = self.store.meta("hours_through")
+        if done is not None:
+            for h in range(max(int(done), cur - CATCH_UP_MAX_S), cur, rollup.H):
+                rollup.recompute_hour(self.store, h)
+        self._set_hours_through(cur)
+        self._roll_days(rollup.day_of(cur))
+
+    def _set_hours_through(self, hour_ts: int) -> None:
+        with self.store.db:
+            self.store.set_meta("hours_through", str(int(hour_ts)))
+
+    def _roll_days(self, today: int) -> None:
+        """Roll up every finished day before ``today`` that has not been rolled up yet."""
+        rolled = self.store.meta("rolled_through")
+        if rolled is None:
+            first = self.store.db.execute("SELECT MIN(hour_ts) FROM rollup_hour").fetchone()[0]
+            if first is None:
+                return
+            rolled = rollup.day_of(first)
+        for day in range(int(rolled), today, rollup.DAY):
+            rollup.rollup_day(self.store, day)
 
     def make_digest(self) -> dict:
         now = self.clock.now()
