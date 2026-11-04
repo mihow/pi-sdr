@@ -60,6 +60,7 @@ def cmd_run(args) -> int:
         live = LiveServer(svc.store, svc.clips, svc.ledger, cfg.live.bind_address, cfg.live.port,
                           digest_fn=svc.make_digest, health_fn=_health_fn(svc))  # fmt: skip
         live.start()
+    svc.start_watchdog(stop)
     logging.getLogger("sdrscan").info("scanning; source %s", args.source)
     try:
         svc.run(stop=stop)

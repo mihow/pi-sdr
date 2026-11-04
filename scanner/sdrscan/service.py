@@ -7,6 +7,9 @@ clock, so ``sdrscan run`` (real time) and ``sdrscan simulate`` and the end-to-en
 - every ``thermal.sample_interval_s``: sample health, store it, ping the watchdog;
 - after each kept voice clip: transcribe it when an engine is configured and the governor
   allows it (inline in simulations, on a worker thread on the rig);
+- a progress watchdog (``start_watchdog``, real time only): when the scan loop makes no
+  progress for 120 s, for example inside a hung USB read, the process exits so systemd
+  restarts the container;
 - at each hour boundary: rebuild the finished hour, fold it into the hour-of-week
   profiles, fold a finished day into the day rollup, then build the digest and hand it to
   the publisher, and write it next to the dashboard page under ``www/``.
@@ -16,6 +19,7 @@ from __future__ import annotations
 
 import gzip
 import logging
+import os
 import queue
 import threading
 import typing
@@ -42,6 +46,8 @@ from .voice.stt import SttEngine, make_stt
 log = logging.getLogger("sdrscan.service")
 STT_MAX_S = 30.0
 HOUR_GRACE_S = 5.0  # let transmissions that end on the boundary close first
+WATCHDOG_S = 120.0
+WATCHDOG_EXIT = 70
 
 
 class Service:
@@ -96,6 +102,7 @@ class Service:
         self._next_health = clock.now()
         self._hour = rollup.hour_of(clock.now())
         self.last_digest: dict | None = None
+        self._progress = clock.monotonic()
         self.digests = 0
         self.www.mkdir(parents=True, exist_ok=True)
         build_dashboard("digest.json.gz", "static", self.www)
@@ -106,6 +113,7 @@ class Service:
     def run(self, until: float | None = None, stop: threading.Event | None = None) -> None:
         while (until is None or self.clock.now() < until) and not (stop and stop.is_set()):
             self.runner.step()
+            self._progress = self.clock.monotonic()
             self.tick()
 
     def tick(self) -> None:
@@ -120,6 +128,25 @@ class Service:
         if rollup.hour_of(now - HOUR_GRACE_S) > self._hour:
             self._finish_hour(self._hour)
             self._hour = rollup.hour_of(now - HOUR_GRACE_S)
+
+    def watchdog_check(self, exit_fn: typing.Callable[[int], None] = os._exit) -> bool:
+        """Exit the process when the scan loop has been stuck for ``WATCHDOG_S``."""
+        stuck = self.clock.monotonic() - self._progress
+        if stuck > WATCHDOG_S:
+            log.error("scan loop made no progress for %.0f s; exiting for a restart", stuck)
+            logging.shutdown()
+            exit_fn(WATCHDOG_EXIT)
+            return False
+        return True
+
+    def start_watchdog(self, stop: threading.Event) -> threading.Thread:
+        def loop() -> None:
+            while not stop.wait(10.0):
+                self.watchdog_check()
+
+        t = threading.Thread(target=loop, name="sdrscan-watchdog", daemon=True)
+        t.start()
+        return t
 
     def shutdown(self) -> None:
         self.runner.shutdown()

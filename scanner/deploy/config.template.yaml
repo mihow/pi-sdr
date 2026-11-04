@@ -1,0 +1,26 @@
+# sdrscan configuration for the rig. install.sh copies this to /etc/sdrscan/config.yaml only
+# when that file is missing, so edits on the rig are kept across upgrades.
+# Every key not listed here keeps the default in the package's config.example.yaml.
+# Secrets (the upload URL with its signature, passwords) go in /etc/sdrscan/uplink.env.
+
+site_id: site                  # a short label shown on the dashboard
+data_root: /var/lib/sdrscan
+stage_root: /run/sdrscan
+labels_path: null              # optional /etc/sdrscan/labels.yaml with local channel names
+
+quota:
+  clip_quota_bytes: 2147483648 # 2 GiB of recent voice clips
+
+uplink:
+  target: http_put             # file | http_put | http_post
+  secrets_env: /etc/sdrscan/uplink.env
+  cap_bytes: 30000000          # hard monthly cap for everything the scanner sends
+  include_transcripts: false   # transcripts stay on the rig unless this is true
+
+live:
+  enabled: false               # the rig's own page, for viewers on the tailnet
+  bind_address: null           # set to the rig's tailnet address on site; never commit it
+  port: 8073
+
+stt:
+  engine: none
