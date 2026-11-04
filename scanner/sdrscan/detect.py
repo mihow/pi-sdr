@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import bisect
 import dataclasses
+import functools
 import math
 
 import numpy as np
@@ -69,8 +70,10 @@ def analyze_psd(
     valid = np.zeros(nfft, dtype=bool)
     valid[crop : nfft - crop] = True
     valid[mid - cfg.dc_mask_bins : mid + cfg.dc_mask_bins + 1] = False
-    floor = float(np.median(psd_db[valid]))
-    mad = float(np.median(np.abs(psd_db[valid] - floor)))
+    vals = psd_db[valid]
+    floor = _median(vals)
+    # The spread is a health figure only, so a quarter of the bins estimate it well enough.
+    mad = _median(np.abs(vals[::4] - floor))
     thr = _thresholds(plan, cfg, center_hz, bin_hz, nfft)
     hot = valid & (psd_db > floor + thr)
     lo_hz = int(round(center_hz + (crop - mid) * bin_hz))
@@ -90,6 +93,13 @@ def analyze_psd(
     )
 
 
+def _median(x: np.ndarray) -> float:
+    """Median by one partition (np.median carries overhead that shows in week simulations)."""
+    n = len(x)
+    part = np.partition(x, [(n - 1) // 2, n // 2])
+    return float(0.5 * (part[(n - 1) // 2] + part[n // 2]))
+
+
 def _band_threshold(band, cfg: DetectConfig) -> float:
     if band.threshold_db is not None:
         return band.threshold_db
@@ -97,22 +107,31 @@ def _band_threshold(band, cfg: DetectConfig) -> float:
 
 
 def _thresholds(plan: BandPlan, cfg: DetectConfig, center: int, bin_hz: float, nfft: int):
+    return _thresholds_cached(plan, cfg, int(center), float(bin_hz), nfft)
+
+
+@functools.lru_cache(maxsize=2048)
+def _thresholds_cached(plan: BandPlan, cfg: DetectConfig, center: int, bin_hz: float, nfft: int):
     freqs_lo = center - (nfft // 2) * bin_hz
-    thr = np.full(nfft, cfg.threshold_db, dtype=np.float64)
+    thr = np.full(nfft, cfg.threshold_db, dtype=np.float32)
     hi = freqs_lo + nfft * bin_hz
-    for band in plan.bands:
-        if band.hi_hz <= freqs_lo or band.lo_hz >= hi:
+    i = max(0, bisect.bisect_right([b.lo_hz for b in plan.bands], freqs_lo) - 1)
+    for band in plan.bands[i:]:
+        if band.lo_hz >= hi:
+            break
+        if band.hi_hz <= freqs_lo:
             continue
         a = max(0, int(math.ceil((band.lo_hz - freqs_lo) / bin_hz)))
         b = min(nfft, int(math.ceil((band.hi_hz - freqs_lo) / bin_hz)))
         thr[a:b] = _band_threshold(band, cfg)
+    thr.flags.writeable = False
     return thr
 
 
 def _peaks(psd_db, hot, floor, center_hz, bin_hz, cfg: DetectConfig) -> list[Peak]:
     if not hot.any():
         return []
-    edges = np.diff(np.r_[0, hot.astype(np.int8), 0])
+    edges = np.diff(np.concatenate(([0], hot.view(np.int8), [0])))
     starts = np.flatnonzero(edges == 1)
     ends = np.flatnonzero(edges == -1)  # exclusive
     gap = max(3, int(math.ceil(2_000 / bin_hz)))
@@ -144,15 +163,24 @@ def _peaks(psd_db, hot, floor, center_hz, bin_hz, cfg: DetectConfig) -> list[Pea
     return out
 
 
-def _occupancy(hot, valid, center_hz, bin_hz) -> dict[int, float]:
-    nfft = len(hot)
+@functools.lru_cache(maxsize=2048)
+def _mhz_segments(center_hz: int, bin_hz: float, nfft: int, valid_key: bytes):
+    """Start index of each 1 MHz run among the valid bins, and the MHz of each run."""
+    valid = np.frombuffer(valid_key, dtype=bool)
     freqs = center_hz + (np.arange(nfft) - nfft // 2) * bin_hz
-    mhz = np.floor(freqs / 1e6).astype(np.int64)
-    out: dict[int, float] = {}
-    for m in np.unique(mhz[valid]):
-        sel = valid & (mhz == m)
-        out[int(m)] = float(hot[sel].mean())
-    return out
+    mhz = np.floor(freqs / 1e6).astype(np.int64)[valid]
+    starts = np.flatnonzero(np.r_[True, mhz[1:] != mhz[:-1]])
+    counts = np.diff(np.r_[starts, len(mhz)])
+    return starts, counts, [int(m) for m in mhz[starts]]
+
+
+def _occupancy(hot, valid, center_hz, bin_hz) -> dict[int, float]:
+    starts, counts, mhzs = _mhz_segments(int(center_hz), float(bin_hz), len(hot), valid.tobytes())
+    sums = np.add.reduceat(hot[valid].astype(np.int32), starts)
+    return {m: float(s) / int(c) for m, s, c in zip(mhzs, sums, counts, strict=True)}
+
+
+_SPUR_REFRESH_S = 300.0  # re-evaluate marks at most every 5 virtual minutes
 
 
 @dataclasses.dataclass
@@ -194,6 +222,7 @@ class SpurMap:
         self._t = 0.0
         self._marked_abs: set[int] = set()
         self._marked_off: set[int] = set()
+        self._refreshed_t: float | None = None
 
     def update(self, r: HopResult, t: float) -> None:
         self._hops += 1
@@ -222,11 +251,10 @@ class SpurMap:
                 if st is None:
                     st = self._off[ko] = _SpurStat(first_t=t, first_hop=self._hops)
                 self._hit(st, p)
-        if self._hops % 1000 == 0:
-            self._refresh()
 
     def is_spur(self, hz: float, center_hz: int | None = None) -> bool:
-        self._refresh()
+        if self._refreshed_t is None or self._t - self._refreshed_t >= _SPUR_REFRESH_S:
+            self._refresh()
         k = round(hz / self.key_hz)
         if any(k + d in self._marked_abs for d in (-1, 0, 1)):
             return True
@@ -267,6 +295,7 @@ class SpurMap:
         return math.sqrt(var) <= self.max_sd
 
     def _refresh(self) -> None:
+        self._refreshed_t = self._t
         self._marked_abs = {k for k, st in self._abs.items() if self._qualifies(st, st.visits)}
         self._marked_off = {
             k for k, st in self._off.items() if self._qualifies(st, self._hops - st.first_hop + 1)

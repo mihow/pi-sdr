@@ -55,6 +55,7 @@ class SyntheticSource:
         self._reopen = 0
         self._last_block: float | None = None
         self._rng = np.random.default_rng(scene.seed)
+        self._pools: dict[int, np.ndarray] = {}
 
     # -- IqSource protocol -------------------------------------------------------------
     def open(self) -> None:
@@ -89,7 +90,7 @@ class SyntheticSource:
         dur = n / self.rate
         bin_hz = self.rate / nfft
         noise = 10 ** (self.scene.noise_db(center) / 10)
-        power = noise * self._rng.gamma(navg, 1.0 / navg, size=nfft)
+        power = noise * self._gamma(navg, nfft)
         kernel = hann_kernel(nfft)
         kc = len(kernel) // 2
         os_ = len(kernel) // nfft
@@ -144,6 +145,18 @@ class SyntheticSource:
         return {"dropped": 0, "reopen_count": self._reopen, "last_block_age_s": age}
 
     # -- internals ---------------------------------------------------------------------
+    def _gamma(self, navg: int, nfft: int) -> np.ndarray:
+        """Averaged-periodogram noise factors (Gamma(navg) / navg), from a reused pool.
+
+        Drawing 4096 gamma values per hop dominated week-long simulations; a random slice
+        of a large pool has the same distribution per bin.
+        """
+        pool = self._pools.get(navg)
+        if pool is None:
+            pool = self._pools[navg] = self._rng.gamma(navg, 1.0 / navg, size=1 << 20)
+        start = int(self._rng.integers(0, len(pool) - nfft))
+        return pool[start : start + nfft].copy()
+
     def _t_rel(self) -> float:
         return self.clock.now() - self.scene.t0
 

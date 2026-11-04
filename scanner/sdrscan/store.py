@@ -297,9 +297,10 @@ class Store:
     def flush(self) -> None:
         pending, self._pending = self._pending, []
         with self.db:
+            # Hour rows first, so a queued coverage update finds its rows.
+            self._write_hours()
             for sql, params in pending:
                 self.db.execute(sql, params)
-            self._write_hours()
         self._last_flush = self.clock.monotonic()
 
     def prune(self, now: float) -> None:

@@ -88,6 +88,7 @@ class _Duty:
 
     def __init__(self, t: float) -> None:
         self.first_t = t
+        self.homes: set[tuple[int, int]] = set()  # window spans that have seen this channel
         self.buckets: collections.deque[list] = collections.deque()
         self.always_on = False
         self.last_hit_t = t
@@ -118,6 +119,9 @@ class Tracker:
         self._tracks: dict[int, Track] = {}
         self._duty: dict[int, _Duty] = {}
         self._keys: list[int] = []  # sorted keys of _duty
+        # Bumped whenever a track appears, changes state or goes away, so callers such as
+        # the scheduler can cache what they derive from ``active()``.
+        self.version = 0
 
     # -- queries -----------------------------------------------------------------------
     def state(self, hz: int) -> TrackState:
@@ -141,7 +145,7 @@ class Tracker:
             ok.add(TrackState.CANDIDATE)
         return [
             t
-            for t in self.tracks()
+            for t in sorted(self._tracks.values(), key=lambda tr: tr.channel.hz)
             if t.state in ok
             and t.channel.policy == policy
             and (policy != "dwell" or t.channel.voice_capable)
@@ -155,8 +159,13 @@ class Tracker:
         source: str,
         span: tuple[int, int] | None = None,
     ) -> list[TrackEvent]:
-        """Feed one reading of a window. ``span`` is the analyzed [lo, hi) range; tracks in
-        it that have no peak count as missed. Without a span, nothing counts as missed."""
+        """Feed one reading of a window. ``span`` is the analyzed [lo, hi) range.
+
+        A track in the span with no peak counts as missed, but only if this window has seen
+        it before. A spur at a fixed tuner offset shows up at a different channel in each
+        window; without that rule, every overlapping window would close it as a
+        transmission. Without a span, nothing counts as missed.
+        """
         hits = self._hits(peaks)
         events: list[TrackEvent] = []
         keys = set(hits)
@@ -166,6 +175,11 @@ class Tracker:
             keys.update(self._keys[lo:hi])
         for hz in sorted(keys):
             peak_ch = hits.get(hz)
+            if span is not None:
+                if peak_ch is not None:
+                    self._ensure_duty(hz, t).homes.add(span)
+                elif span not in self._duty[hz].homes:
+                    continue
             if source == "survey":
                 events += self._record_duty(hz, t, peak_ch is not None)
             if self.is_always_on(hz):
@@ -185,6 +199,7 @@ class Tracker:
                     events.append(self._close(tr, t))
                 else:
                     del self._tracks[hz]
+                    self.version += 1
         return events
 
     def close_all(self, t: float) -> list[TrackEvent]:
@@ -194,6 +209,7 @@ class Tracker:
             if tr.state is TrackState.ACTIVE and not self.is_always_on(tr.hz)
         ]
         self._tracks.clear()
+        self.version += 1
         return events
 
     # -- internals ---------------------------------------------------------------------
@@ -203,10 +219,25 @@ class Tracker:
             ch = self.plan.channel_for(p.hz)
             if ch.policy not in _TRACKED_POLICIES and ch.band != "unplanned":
                 continue
+            ch = self._sticky(ch, p.hz)
             prev = out.get(ch.hz)
             if prev is None or p.snr_db > prev[0].snr_db:
                 out[ch.hz] = (p, ch)
         return out
+
+    def _sticky(self, ch: Channel, hz: float) -> Channel:
+        """Keep a peak near a raster midpoint on the channel it already belongs to.
+
+        A signal halfway between two raster points snaps to either one depending on noise;
+        without this, each flip reads as a miss on one channel and a new signal on the next.
+        """
+        if ch.hz in self._duty:
+            return ch
+        raster = self.plan.band(ch.band).raster_hz if ch.band != "unplanned" else 12_500
+        for other in (ch.hz - raster, ch.hz + raster):
+            if other in self._duty and abs(hz - other) <= 0.75 * raster:
+                return self.plan.channel_for(other)
+        return ch
 
     def _ensure_duty(self, hz: int, t: float) -> _Duty:
         d = self._duty.get(hz)
@@ -226,7 +257,8 @@ class Tracker:
         duty = d.duty()
         if not d.always_on and t - d.first_t >= _DUTY_WINDOW_S and duty > self.cfg.always_on_duty:
             d.always_on = True
-            self._tracks.pop(hz, None)
+            if self._tracks.pop(hz, None) is not None:
+                self.version += 1
             events.append(TrackEvent("always_on", hz, t))
         elif d.always_on and duty < _ALWAYS_ON_CLEAR:
             d.always_on = False
@@ -240,6 +272,7 @@ class Tracker:
         tr = self._tracks.get(hz)
         if tr is None:
             tr = self._tracks[hz] = Track(channel=ch, first_t=t, last_t=t)
+            self.version += 1
         tr.last_t = t
         tr.last_visit_t = t
         if len(tr.snrs) < _MAX_SNR_SAMPLES:
@@ -262,6 +295,7 @@ class Tracker:
             )
             if confirmed:
                 tr.state = TrackState.ACTIVE
+                self.version += 1
                 return [TrackEvent("opened", hz, t)]
         return []
 
@@ -276,16 +310,19 @@ class Tracker:
                 if tr.state is TrackState.ACTIVE:
                     return [self._close(tr, t)]
                 del self._tracks[hz]
+                self.version += 1
             return []
         tr.visits.append(False)
         if tr.state is TrackState.ACTIVE:
             return [self._close(tr, t)]
         if sum(tr.visits) + (3 - len(tr.visits)) < 2 or list(tr.visits)[-2:] == [False, False]:
             del self._tracks[hz]
+            self.version += 1
         return []
 
     def _close(self, tr: Track, t: float) -> TrackEvent:
         self._tracks.pop(tr.hz, None)
+        self.version += 1
         tx = Transmission(
             hz=tr.hz,
             band=tr.channel.band,
