@@ -95,6 +95,24 @@ class UplinkConfig:
 
 
 @dataclasses.dataclass(frozen=True)
+class SttConfig:
+    engine: str = "none"  # none | whisper_cpp | fake (tests)
+    binary: Path | None = None
+    model: Path | None = None
+    threads: int = 2
+    min_confidence: float = 0.6
+    queue_max: int = 50
+
+
+@dataclasses.dataclass(frozen=True)
+class ProseConfig:
+    engine: str = "none"  # none | llama_cli
+    binary: Path | None = None
+    model: Path | None = None
+    threads: int = 2
+
+
+@dataclasses.dataclass(frozen=True)
 class LiveConfig:
     enabled: bool = False
     bind_address: str | None = None
@@ -114,6 +132,8 @@ class Config:
     thermal: ThermalConfig = ThermalConfig()
     uplink: UplinkConfig = UplinkConfig()
     live: LiveConfig = LiveConfig()
+    stt: SttConfig = SttConfig()
+    prose: ProseConfig = ProseConfig()
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -200,5 +220,9 @@ def _validate(cfg: Config) -> None:
             raise ConfigError(f"duty.{name}: share must be between 0 and 1")
     if cfg.uplink.target not in {"file", "http_put", "http_post"}:
         raise ConfigError("uplink.target: must be file, http_put or http_post")
+    if cfg.stt.engine not in {"none", "whisper_cpp", "fake"}:
+        raise ConfigError("stt.engine: must be none, whisper_cpp or fake")
+    if cfg.prose.engine not in {"none", "llama_cli"}:
+        raise ConfigError("prose.engine: must be none or llama_cli")
     if cfg.quota.clip_quota_bytes < 0:
         raise ConfigError("quota.clip_quota_bytes: must not be negative")

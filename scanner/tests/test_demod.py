@@ -10,7 +10,7 @@ from sdrscan.dsp.channelizer import Channelizer, StreamingDecimator
 from sdrscan.dsp.demod import am_demod, nfm_demod
 from sdrscan.iq.scene import Scene
 from sdrscan.iq.synthetic import SyntheticSource
-from sdrscan.voice.gate import AlwaysNoiseGate
+from sdrscan.voice.gate import VoiceGate
 
 CENTER = 462_406_250
 CH1 = 462_562_500
@@ -81,11 +81,13 @@ def test_am_tone_demodulates_to_the_tone(plan, vclock):
 def test_audio_rate_matches_the_voice_gate(plan, vclock):
     """Regression: v1 fed 48 kHz audio to a detector that assumed 16 kHz."""
     ch = Channelizer(IQ_RATE, CENTER, [plan.channel_for(CH1)])
-    gate = AlwaysNoiseGate()
-    assert ch.audio_rate == AUDIO_RATE == gate.rate
+    gate = VoiceGate()
+    assert ch.audio_rate == AUDIO_RATE == gate.rate == gate.frame * 1000 // 30
     src = _source(vclock, f"  - {{kind: nfm_voice, hz: {CH1}, level_db: -20, tone_hz: 1000}}\n")
     audio = ch.push(src.read(IQ_RATE // 2))[CH1]
     assert len(audio) == pytest.approx(AUDIO_RATE // 2, abs=2)
+    gate.push(audio)
+    assert gate.summary()["frames"] == len(audio) // gate.frame
 
 
 def test_two_channels_have_no_crosstalk(plan, vclock):

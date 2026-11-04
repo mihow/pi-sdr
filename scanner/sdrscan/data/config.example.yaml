@@ -70,3 +70,17 @@ live:
   enabled: false
   bind_address: null           # read at install time; never committed
   port: 8073
+
+stt:                           # speech-to-text on kept voice clips; off by default
+  engine: none                 # none | whisper_cpp
+  binary: null                 # path to whisper-cli
+  model: null                  # path to a ggml model, for example tiny.en
+  threads: 2
+  min_confidence: 0.6          # below this a transcript is stored but never shown as fact
+  queue_max: 50
+
+prose:                         # optional one-paragraph summary from a small local LLM
+  engine: none                 # none | llama_cli
+  binary: null
+  model: null
+  threads: 2
