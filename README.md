@@ -2,6 +2,13 @@
 
 Minimal Raspberry Pi 5 image builder for Software-Defined Radio. Produces a flashable `.img.xz` with RTL-SDR V4 drivers, SoapySDR, and Tailscale pre-installed. No audio stack, no scanner config — just the SDR foundation.
 
+## Scanner (`scanner/`)
+
+`scanner/` holds `sdrscan`, an unattended scanner that runs on this image in one container.
+It sweeps the bands, keeps recent speech clips under a storage quota, and pushes a few-KB
+hourly digest off site for a phone-friendly dashboard, so viewing costs the rig no data.
+See [`scanner/README.md`](scanner/README.md).
+
 ## Prerequisites
 
 - Docker with compose plugin
