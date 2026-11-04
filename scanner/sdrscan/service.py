@@ -30,7 +30,7 @@ import numpy as np
 from . import rollup
 from .bandplan import BandPlan
 from .clips import ClipStore, Encoder
-from .clock import Clock
+from .clock import Clock, RealClock, kernel_clock_synced
 from .config import Config
 from .dashboard import build_dashboard
 from .health import HealthMonitor
@@ -70,9 +70,14 @@ class Service:
         prose: ProseEngine | None = None,
         inline_stt: bool = False,
         runner_kw: dict | None = None,
+        clock_synced: typing.Callable[[], bool | None] | None = None,
     ) -> None:
         self.cfg = cfg
         self.clock = clock
+        if clock_synced is None:
+            clock_synced = kernel_clock_synced if isinstance(clock, RealClock) else lambda: None
+        self._clock_synced = clock_synced
+        self._unsynced_ref: float | None = None  # wall minus monotonic while unsynced
         self.plan = plan or BandPlan.load(cfg.bandplan_path, cfg.labels_path)
         root = Path(cfg.data_root)
         self.www = root / "www"
@@ -108,9 +113,11 @@ class Service:
             quota_used=self.clips.used_bytes,
             status=lambda: self.runner.status,
             extra_flags=lambda: ["uplink_unconfigured"] if self.uplink_error else [],
+            clock_synced=clock_synced,
             **fs_kw,
         )
         self.runner.mode_fn = self.health.mode
+        self.runner.clock_ok_fn = lambda: self._clock_synced() is not False
         self.ledger = Ledger(self.store, cfg.uplink, clock)
         # A missing or bad uplink configuration (the state of a fresh install) turns pushes
         # off; it must never stop the scan or the live page on a rig nobody can reach.
@@ -148,6 +155,7 @@ class Service:
             self.tick()
 
     def tick(self) -> None:
+        self._check_clock_sync()
         now = self.clock.now()
         if now >= self._next_health:
             h = self.health.sample()
@@ -159,6 +167,24 @@ class Service:
         if rollup.hour_of(now - HOUR_GRACE_S) > self._hour:
             self._finish_hour(self._hour)
             self._hour = rollup.hour_of(now - HOUR_GRACE_S)
+
+    def _check_clock_sync(self) -> None:
+        """When NTP first syncs, shift rows stamped by the unsynced clock by the step.
+
+        The step is the change in wall time minus monotonic time since the clock was
+        first seen unsynced. Rows from an earlier boot keep ``clock_ok = 0``.
+        """
+        offset = self.clock.now() - self.clock.monotonic()
+        if self._clock_synced() is False:
+            if self._unsynced_ref is None:
+                self._unsynced_ref = offset
+            return
+        if self._unsynced_ref is None:
+            return
+        step = offset - self._unsynced_ref
+        self._unsynced_ref = None
+        log.info("clock synchronized; shifting unsynced rows by %.0f s", step)
+        rollup.apply_clock_correction(self.store, step if abs(step) >= 1 else 0.0)
 
     def watchdog_check(self, exit_fn: typing.Callable[[int], None] = os._exit) -> bool:
         """Exit the process when the scan loop has been stuck for ``WATCHDOG_S``.

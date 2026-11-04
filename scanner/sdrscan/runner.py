@@ -113,6 +113,7 @@ class Runner:
         self.gate_factory = gate_factory
         self.clips = clips or NoClips()
         self.mode_fn = mode_fn or (lambda: "normal")
+        self.clock_ok_fn: typing.Callable[[], bool] = lambda: True
         self.spectrum = spectrum
         self._survey_psd = spectrum in {"psd", "hybrid"}
         self._dwell_iq = spectrum in {"iq", "hybrid"}
@@ -285,6 +286,7 @@ class Runner:
             else:
                 self.clips.abort(writer)
         tx.clip_id = clip_id
+        tx.clock_ok = self.clock_ok_fn()  # rows from an unsynced clock are shifted later
         if self.clips.disk_low():
             self.status["dropped_tx"] = self.status.get("dropped_tx", 0) + 1
             return  # below the free-space floor: rollups, health and digests continue

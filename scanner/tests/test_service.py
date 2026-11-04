@@ -225,3 +225,39 @@ def test_speech_to_text_runs_at_nice_19_on_the_rig(tmp_path, vclock, sys_root):
     assert seen == [19]
     assert os.getpriority(os.PRIO_PROCESS, 0) == before
     svc.shutdown()
+
+
+def test_rows_stamped_before_ntp_sync_are_shifted_when_the_clock_steps(tmp_path, vclock, sys_root):
+    """A Pi that boots from fake-hwclock runs on a stale time until NTP syncs over LTE.
+    Rows recorded meanwhile carry clock_ok = 0, health says clock_unsynced, and when the
+    sync steps the clock the rows and their hour rollups move by the step."""
+    from sdrscan import rollup
+
+    state = {"synced": False}
+    day0 = vclock.now()
+    vclock.set(day0 + 10 * 3600)
+    src = SyntheticSource(Scene.from_yaml(BURSTY, vclock), vclock)
+    svc = Service(
+        _plain_cfg(tmp_path), vclock, src, spectrum="psd", statvfs=FakeFs(0.5),
+        sys_root=sys_root, clock_synced=lambda: state["synced"],
+    )  # fmt: skip
+    svc.run(until=vclock.now() + 600)
+    svc.store.flush()
+    rows = svc.store.db.execute("SELECT t_start, clock_ok FROM transmissions").fetchall()
+    assert rows and all(r["clock_ok"] == 0 for r in rows)
+    assert "clock_unsynced" in svc.health.sample().flags
+    before = sorted(r["t_start"] for r in rows)
+    step = 3 * 3600 + 17
+    vclock.set(vclock.now() + step)  # NTP steps wall time; monotonic time is unchanged
+    state["synced"] = True
+    svc.run(until=vclock.now() + 30)
+    svc.store.flush()
+    rows = svc.store.db.execute("SELECT t_start, clock_ok FROM transmissions").fetchall()
+    assert all(r["clock_ok"] == 1 for r in rows)
+    assert sorted(r["t_start"] for r in rows)[: len(before)] == [t + step for t in before]
+    old_hour = rollup.hour_of(before[0])
+    assert not svc.store.db.execute(
+        "SELECT 1 FROM rollup_hour WHERE hour_ts = ?", (old_hour,)
+    ).fetchone()
+    assert "clock_unsynced" not in svc.health.sample().flags
+    svc.shutdown()

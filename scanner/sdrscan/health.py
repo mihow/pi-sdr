@@ -132,6 +132,7 @@ class HealthMonitor:
         statvfs: typing.Callable[[str], typing.Any] = os.statvfs,
         notify: typing.Callable[[str], None] | None = None,
         extra_flags: typing.Callable[[], list[str]] | None = None,
+        clock_synced: typing.Callable[[], bool | None] | None = None,
     ) -> None:
         self.cfg = cfg
         self.clock = clock
@@ -144,6 +145,7 @@ class HealthMonitor:
         self._statvfs = statvfs
         self._notify = notify or _sd_notify
         self._extra_flags = extra_flags or (lambda: [])
+        self._clock_synced = clock_synced or (lambda: None)
         self._start = clock.monotonic()
         self._level = 0
         self.last: Health | None = None
@@ -162,7 +164,7 @@ class HealthMonitor:
         if free_pct is not None and free_pct < quota.free_evict_frac * 100:
             flags.append("disk_low")
         now = self.clock.now()
-        clock_ok = now >= MIN_VALID_EPOCH
+        clock_ok = now >= MIN_VALID_EPOCH and self._clock_synced() is not False
         if not clock_ok:
             flags.append("clock_unsynced")
         st = self._status()

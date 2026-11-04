@@ -6,8 +6,13 @@ week on ``VirtualClock`` in seconds.
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
+import functools
 import time
 import typing
+
+_TIME_ERROR = 5  # adjtimex(2): the kernel clock is not synchronized
 
 
 @typing.runtime_checkable
@@ -59,3 +64,24 @@ class VirtualClock:
     def set(self, t: float) -> None:
         """Jump wall time to ``t``, as an NTP correction would. Monotonic time is unchanged."""
         self._now = float(t)
+
+
+@functools.cache
+def _libc() -> ctypes.CDLL:
+    return ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+
+
+def kernel_clock_synced() -> bool | None:
+    """Whether NTP has synchronized the kernel clock, from a read-only ``adjtimex(2)``.
+
+    Works inside a container (reading needs no capability). None where it is unavailable.
+    """
+    try:
+        libc = _libc()
+        buf = ctypes.create_string_buffer(512)  # struct timex, modes = 0 means read only
+        state = libc.adjtimex(buf)
+    except (OSError, AttributeError):
+        return None
+    if state < 0:
+        return None
+    return state != _TIME_ERROR
