@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import hashlib
+import logging
 import os
 import shutil
 import subprocess
@@ -34,6 +35,8 @@ from . import AUDIO_RATE
 from .clock import Clock
 from .config import QuotaConfig
 from .store import Store
+
+log = logging.getLogger("sdrscan.clips")
 
 MAX_CLIP_S = 120.0
 TIER_NOISE, TIER_VOICE, TIER_PINNED = 0, 1, 2
@@ -188,6 +191,7 @@ class ClipStore:
                 "SELECT id, hz, t_start, bytes, tier, path FROM clips WHERE path IS NOT NULL"
             )
         }
+        self._remove_orphans()
 
     # -- recording ---------------------------------------------------------------------
     def begin(self, hz: int, t: float) -> ClipWriter:
@@ -231,6 +235,9 @@ class ClipStore:
             sha256=hashlib.sha256(data).hexdigest(),
             pinned=pinned,
         )
+        # Commit now: the file is already on disk, and a crash before the 10 s batch
+        # would leave bytes the quota never counts.
+        self.store.flush()
         self._clips[clip_id] = _Clip(clip_id, w.hz, int(w.t_start), len(data), tier, rel)
         self.enforce()
         return clip_id if clip_id in self._clips else None
@@ -319,3 +326,16 @@ class ClipStore:
         if self.clip_root.exists():
             for p in self.clip_root.rglob("*.partial"):
                 p.unlink(missing_ok=True)
+
+    def _remove_orphans(self) -> None:
+        """Delete clip files with no index row, so the quota accounts for every byte."""
+        if not self.clip_root.exists():
+            return
+        known = {c.path for c in self._clips.values()}
+        removed = 0
+        for p in self.clip_root.rglob("*"):
+            if p.is_file() and str(p.relative_to(self.data_root)) not in known:
+                p.unlink(missing_ok=True)
+                removed += 1
+        if removed:
+            log.warning("removed %d clip files that had no index row", removed)

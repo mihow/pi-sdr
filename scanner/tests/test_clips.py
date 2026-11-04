@@ -170,3 +170,34 @@ def test_real_opus_encoder_is_about_8_kbit(tmp_path):
     OpusEncoder().encode(voice(10.0), out)
     assert 5_000 < out.stat().st_size < 16_000
     assert np.isfinite(out.stat().st_size)
+
+
+def test_a_finished_clip_row_is_committed_before_finish_returns(env, vclock):
+    """A crash right after a clip is kept (the watchdog exits without flushing) must not
+    leave a file the quota cannot see: the row is on disk as soon as finish() returns."""
+    store, fs, make, tmp = env
+    clips = make()
+    ids = []
+    for i in range(5):  # no clock advance, so the 10 s batch timer never fires
+        w = clips.begin(462_000_000 + i * 12_500, vclock.now())
+        w.write(voice(2.0))
+        ids.append(clips.finish(w, {"class": "voice"}))
+    other = Store.open(tmp / "db" / "scan.sqlite", vclock)  # another connection: disk only
+    n = other.db.execute("SELECT COUNT(*) FROM clips WHERE path IS NOT NULL").fetchone()[0]
+    other.db.close()
+    assert n == len(ids)
+
+
+def test_startup_deletes_clip_files_that_have_no_row(env, vclock):
+    """Files left by an older build (or a lost batch) are removed, so the quota and the
+    free-space eviction account for every byte under clips/."""
+    store, fs, make, tmp = env
+    clips = make()
+    kept = _clip(clips, vclock, 462_000_000)
+    day = clips.path_for(kept).parent
+    orphan = day / "462012500-1780272000.opus"
+    orphan.write_bytes(b"x" * 50 * KB)
+    again = make()
+    assert not orphan.exists()
+    assert again.path_for(kept).exists()
+    assert again.used_bytes() == 50 * KB
