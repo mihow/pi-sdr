@@ -199,3 +199,51 @@ def test_secrets_file_parsing(tmp_path):
     p.write_text("# comment\nSDRSCAN_UPLINK_URL='http://h/{name}'\nSDRSCAN_UPLINK_AUTH=Basic x\n")
     s = load_secrets(p)
     assert s["SDRSCAN_UPLINK_URL"] == "http://h/{name}" and s["SDRSCAN_UPLINK_AUTH"] == "Basic x"
+
+
+def test_a_push_that_times_out_after_sending_is_still_charged(store, vclock, tmp_path):
+    """The body and the TLS handshake crossed the LTE link even though no answer came."""
+    import socket
+
+    lsock = socket.socket()
+    lsock.bind(("127.0.0.1", 0))
+    lsock.listen(4)
+    held = []
+
+    def swallow():
+        while True:
+            try:
+                c, _ = lsock.accept()
+            except OSError:
+                return
+            held.append(c)  # read nothing back, answer nothing
+
+    threading.Thread(target=swallow, daemon=True).start()
+    env = tmp_path / "uplink.env"
+    env.write_text(f"SDRSCAN_UPLINK_URL=http://127.0.0.1:{lsock.getsockname()[1]}/{{name}}\n")
+    ucfg = UplinkConfig(target="http_put", secrets_env=env)
+    target = HttpPutTarget.from_secrets(load_secrets(env), timeout_s=0.5)
+    ledger = Ledger(store, ucfg, vclock)
+    pub = DigestPublisher(target, ledger, tmp_path / "outbox", vclock, ucfg)
+    res = pub.publish(_digest(vclock.now(), extra=2000), vclock.now())
+    lsock.close()
+    assert res.status == "failed"
+    assert ledger.month_bytes() >= ucfg.tls_overhead_bytes
+
+
+def test_a_refused_connection_is_not_charged(store, vclock, tmp_path):
+    import socket
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()  # nothing listens here
+    env = tmp_path / "uplink.env"
+    env.write_text(f"SDRSCAN_UPLINK_URL=http://127.0.0.1:{port}/{{name}}\n")
+    ucfg = UplinkConfig(target="http_put", secrets_env=env)
+    ledger = Ledger(store, ucfg, vclock)
+    pub = DigestPublisher(
+        HttpPutTarget.from_secrets(load_secrets(env)), ledger, tmp_path / "ob", vclock, ucfg
+    )
+    assert pub.publish(_digest(vclock.now()), vclock.now()).status == "failed"
+    assert ledger.month_bytes() == 0

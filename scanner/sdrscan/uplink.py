@@ -27,6 +27,7 @@ import hmac
 import json
 import logging
 import os
+import socket
 import time
 import typing
 import urllib.error
@@ -160,8 +161,12 @@ class _HttpTarget:
         except urllib.error.HTTPError as exc:
             hdr = sum(len(k) + len(v) + 4 for k, v in exc.headers.items()) + 17
             return Response(exc.code, out, hdr)
-        except (urllib.error.URLError, OSError, TimeoutError):
-            return Response(0, 0, 0)  # nothing reached the host; the ledger is unchanged
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            reason = getattr(exc, "reason", exc)
+            if isinstance(reason, ConnectionRefusedError | socket.gaierror):
+                return Response(0, 0, 0)  # nothing reached the host; the ledger is unchanged
+            # A timeout or reset can come after the request went out: count what was sent.
+            return Response(0, out, 0)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.where})"
@@ -476,7 +481,7 @@ class DigestPublisher:
     # -- internals ---------------------------------------------------------------------
     def _send(self, name: str, body: bytes, ctype: str, encoding: str | None) -> Response:
         resp = self.target.put(name, body, ctype, encoding)
-        if resp.status:
+        if resp.status or resp.bytes_out:
             # Connection setup (TLS handshake, TCP) per request; a local file costs none.
             network = self.target.name != "file" and resp.bytes_out
             tls = self.cfg.tls_overhead_bytes if network else 0
