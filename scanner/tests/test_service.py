@@ -196,3 +196,32 @@ def test_the_watchdog_still_fires_when_a_read_hangs(tmp_path, vclock, sys_root):
     vclock.advance(130)  # no step completed, and no backoff in progress
     assert not svc.watchdog_check(codes.append) and codes == [70]
     svc.shutdown()
+
+
+def test_speech_to_text_runs_at_nice_19_on_the_rig(tmp_path, vclock, sys_root):
+    """The worker thread (and so whisper-cli, its child) runs at nice 19; the unit's
+    Nice= never reaches processes inside the container."""
+    import os
+    import threading
+    import types
+
+    import numpy as np
+
+    from sdrscan.voice.stt import Transcript
+
+    seen: list[int] = []
+    done = threading.Event()
+
+    class Probe:
+        def transcribe(self, pcm):
+            seen.append(os.getpriority(os.PRIO_PROCESS, threading.get_native_id()))
+            done.set()
+            return Transcript("copy", 0.9, "probe", 0.1)
+
+    svc = _service(_plain_cfg(tmp_path), vclock, sys_root, stt=Probe())
+    before = os.getpriority(os.PRIO_PROCESS, 0)
+    svc._on_tx(1, types.SimpleNamespace(clip_id=1, t_end=vclock.now()), np.zeros(16_000))
+    assert done.wait(10)
+    assert seen == [19]
+    assert os.getpriority(os.PRIO_PROCESS, 0) == before
+    svc.shutdown()

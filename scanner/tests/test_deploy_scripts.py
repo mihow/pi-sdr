@@ -97,8 +97,7 @@ def test_unit_has_no_audio_access_and_no_ordering_on_other_services():
         "RestartSec=15",
         "StartLimitIntervalSec=0",
         "TimeoutStartSec=300",
-        "Nice=10",
-        "IOSchedulingClass=idle",
+        "--blkio-weight 100",
         "--memory 1g",
         "--cpus 2",
         "--read-only",
@@ -106,6 +105,9 @@ def test_unit_has_no_audio_access_and_no_ordering_on_other_services():
         "-v /dev/bus/usb:/dev/bus/usb --device-cgroup-rule 'c 189:* rmw'",
     ):
         assert setting in unit, setting
+    settings = [line.split("=")[0] for line in unit.splitlines() if not line.startswith("#")]
+    for dead in ("Nice", "IOSchedulingClass"):  # would reach only the docker client
+        assert dead not in settings, dead
     assert "--device /dev/bus/usb" not in unit, "--device misses a replugged dongle's new node"
 
 

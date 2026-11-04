@@ -36,6 +36,7 @@ from .dashboard import build_dashboard
 from .health import HealthMonitor
 from .iq.base import IqSource
 from .llm import ProseEngine, make_prose
+from .lowprio import call_low, lower_this_thread
 from .runner import Runner
 from .store import Store
 from .summarize import build_digest, encode_digest
@@ -243,7 +244,7 @@ class Service:
             uplink=self._uplink_state(),
         )
         if now - rollup.day_of(now) < rollup.H:  # once a day, just after midnight UTC
-            digest["prose"] = self.prose.rewrite(digest, mode=self.health.mode())
+            digest["prose"] = call_low(self.prose.rewrite, digest, mode=self.health.mode())
         return digest
 
     def _uplink_state(self) -> dict:
@@ -306,6 +307,7 @@ class Service:
             self._transcribe(item)
 
     def _stt_worker(self) -> None:
+        lower_this_thread()  # whisper-cli inherits nice 19 from this thread
         while True:
             item = self._stt_q.get()
             try:

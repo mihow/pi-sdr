@@ -622,10 +622,13 @@ docker run --rm --name sdrscan --read-only \
   --network host sdrscan:<tag>
 ```
 
-Unit settings: `Nice=10`, `CPUWeight=50`, `CPUQuota=200%`, `MemoryMax=1G`,
-`IOSchedulingClass=idle`, `Restart=always`, `RestartSec=15`, `StartLimitIntervalSec=0`,
+Unit settings: `Restart=always`, `RestartSec=15`, `StartLimitIntervalSec=0`,
 `TimeoutStartSec=300` (a docker load on an SD card can take more than 90 s),
-`WatchdogSec=120`, `Conflicts=` the legacy OpenWebRX unit.
+`Conflicts=` the legacy OpenWebRX unit. Resource limits are `docker run` flags
+(`--cpus 2 --cpu-shares 512 --blkio-weight 100 --memory 1g`), because the container's
+processes live in Docker's cgroup, not the unit's; `Nice=` on the unit would reach only the
+docker client. Speech-to-text and the prose model run at nice 19 inside the container. The
+scanner's own 120 s progress watchdog replaces `WatchdogSec`.
 
 The unit has no PipeWire, PulseAudio or audio-device access. It never touches the ambient
 player, the phone tunnel or the remote-access units, and it has no ordering against them.
