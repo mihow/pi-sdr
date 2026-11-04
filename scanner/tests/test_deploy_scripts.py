@@ -103,8 +103,10 @@ def test_unit_has_no_audio_access_and_no_ordering_on_other_services():
         "--cpus 2",
         "--read-only",
         "--tmpfs /run/sdrscan:size=64m",
+        "-v /dev/bus/usb:/dev/bus/usb --device-cgroup-rule 'c 189:* rmw'",
     ):
         assert setting in unit, setting
+    assert "--device /dev/bus/usb" not in unit, "--device misses a replugged dongle's new node"
 
 
 def test_template_config_loads():

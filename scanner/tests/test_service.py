@@ -127,3 +127,72 @@ def test_an_hour_cut_short_by_a_restart_is_rebuilt_from_raw_rows(tmp_path, vcloc
     ).fetchone()
     assert n is not None and n[0] >= 2
     svc.shutdown()
+
+
+class _WatchedClock:
+    """A virtual clock whose sleeps run the progress watchdog every 10 s, as the real
+    watchdog thread does while the scan loop sits inside one step."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.on_tick = lambda: None
+
+    def now(self) -> float:
+        return self.inner.now()
+
+    def monotonic(self) -> float:
+        return self.inner.monotonic()
+
+    def sleep(self, s: float) -> None:
+        while s > 0:
+            step = min(10.0, s)
+            self.inner.advance(step)
+            s -= step
+            self.on_tick()
+
+
+class _DeadDongle:
+    opens = 0
+
+    def open(self) -> None:
+        from sdrscan.iq.base import IqSourceError
+
+        self.opens += 1
+        raise IqSourceError("usb_claim_interface error -4")
+
+    def close(self) -> None:
+        pass
+
+    def health(self) -> dict:
+        return {}
+
+
+def test_a_lost_dongle_backs_off_without_tripping_the_watchdog_then_exits_cleanly(
+    tmp_path, vclock, sys_root
+):
+    """Deliberate backoff is progress, not a hang: the watchdog stays quiet through the
+    full 5 s to 300 s ladder. After MAX_OPEN_FAILURES the service stops on purpose, so
+    systemd restarts the container and it rescans the USB bus."""
+    from sdrscan.runner import MAX_OPEN_FAILURES, DongleLost
+
+    clock = _WatchedClock(vclock)
+    src = _DeadDongle()
+    svc = Service(
+        _plain_cfg(tmp_path), clock, src, spectrum="iq", statvfs=FakeFs(0.5), sys_root=sys_root
+    )
+    codes: list[int] = []
+    clock.on_tick = lambda: svc.watchdog_check(codes.append)
+    with pytest.raises(DongleLost):
+        svc.run(until=vclock.now() + 7 * 86400)
+    assert codes == [], "the watchdog fired during a deliberate backoff"
+    assert src.opens == MAX_OPEN_FAILURES
+    assert svc.runner.status["mode"] == "no_dongle"
+    svc.shutdown()
+
+
+def test_the_watchdog_still_fires_when_a_read_hangs(tmp_path, vclock, sys_root):
+    svc = _service(_plain_cfg(tmp_path), vclock, sys_root)
+    codes: list[int] = []
+    vclock.advance(130)  # no step completed, and no backoff in progress
+    assert not svc.watchdog_check(codes.append) and codes == [70]
+    svc.shutdown()

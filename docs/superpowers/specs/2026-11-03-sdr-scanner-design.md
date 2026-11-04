@@ -615,7 +615,8 @@ Image: `debian:trixie-slim`, arm64.
 Runtime: one system unit, `sdrscan.service`, runs:
 
 ```
-docker run --rm --name sdrscan --device /dev/bus/usb --read-only \
+docker run --rm --name sdrscan --read-only \
+  -v /dev/bus/usb:/dev/bus/usb --device-cgroup-rule 'c 189:* rmw' \
   --tmpfs /run/sdrscan:size=64m -v sdrscan-data:/var/lib/sdrscan \
   -v /etc/sdrscan:/etc/sdrscan:ro -v /sys/class/thermal:/host/thermal:ro \
   --network host sdrscan:<tag>
@@ -649,7 +650,7 @@ cap, `live_server` on/off and bind interface. Secrets live in `/etc/sdrscan/upli
 
 | Failure | Detection | Response |
 |---|---|---|
-| Dongle unplugged or USB reset | read raises, sysfs id gone | close, back off 5 s up to 5 min, mode `no_dongle`, health shows it; the watchdog restarts a hung read |
+| Dongle unplugged or USB reset | read raises, sysfs id gone | close, back off 5 s up to 5 min, mode `no_dongle`, health shows it. A backoff sleep counts as progress for the watchdog, which restarts only a hung read. The bind-mounted `/dev/bus/usb` shows a replugged dongle's new node; after 8 failed opens (about 10 min) the scanner exits with code 71 for a clean restart |
 | Dongle held by another process | open fails with a claim error | same back-off; health says "dongle busy"; install preflight disables the legacy holder |
 | Overheating | thermal file, throttle flag | governor modes (5.13); `coverage_pct` drops visibly |
 | Disk filling | `statvfs` | eviction, pruning, insert stop (section 9) |

@@ -5,6 +5,11 @@
 # the container (docker run flags), because the container's processes live in Docker's
 # cgroup, not this unit's. A hung USB read is caught by the scanner's own 120 s progress
 # watchdog, which exits the process so Restart=always starts it again.
+#
+# /dev/bus/usb is bind-mounted with a cgroup rule for USB character devices (major 189)
+# instead of --device, which copies only the nodes that exist at start. A replugged or
+# reset dongle gets a new node, and the running scanner can reopen it. When the radio stays
+# missing for about 10 minutes, the scanner exits with code 71 and systemd restarts it.
 
 [Unit]
 Description=sdrscan unattended radio scanner (container)
@@ -24,7 +29,8 @@ Restart=always
 RestartSec=15
 ExecStartPre=-/usr/bin/docker rm -f sdrscan
 ExecStart=/usr/bin/docker run --rm --name sdrscan \
-  --device /dev/bus/usb --group-add ${SDRSCAN_USB_GID} \
+  -v /dev/bus/usb:/dev/bus/usb --device-cgroup-rule 'c 189:* rmw' \
+  --group-add ${SDRSCAN_USB_GID} \
   --read-only --tmpfs /run/sdrscan:size=64m --tmpfs /tmp:size=16m \
   -v sdrscan-data:/var/lib/sdrscan -v /etc/sdrscan:/etc/sdrscan:ro \
   --network host \

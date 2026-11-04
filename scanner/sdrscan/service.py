@@ -160,7 +160,14 @@ class Service:
             self._hour = rollup.hour_of(now - HOUR_GRACE_S)
 
     def watchdog_check(self, exit_fn: typing.Callable[[int], None] = os._exit) -> bool:
-        """Exit the process when the scan loop has been stuck for ``WATCHDOG_S``."""
+        """Exit the process when the scan loop has been stuck for ``WATCHDOG_S``.
+
+        A deliberate backoff while the radio is missing counts as progress; the runner
+        gives up on its own after ``MAX_OPEN_FAILURES`` (see ``runner.DongleLost``).
+        """
+        if self.runner.backing_off:
+            self._progress = self.clock.monotonic()
+            return True
         stuck = self.clock.monotonic() - self._progress
         if stuck > WATCHDOG_S:
             log.error("scan loop made no progress for %.0f s; exiting for a restart", stuck)

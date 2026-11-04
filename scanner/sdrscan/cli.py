@@ -16,6 +16,7 @@ from .config import Config, load_config
 
 DEFAULT_CONFIG = Path("/etc/sdrscan/config.yaml")
 SIM_EPOCH = 1_780_272_000.0  # 2026-06-01 00:00 UTC, a Monday
+DONGLE_LOST_EXIT = 71  # the radio stayed missing; restart the container to rescan USB
 
 
 def _config(path: str | None) -> Config:
@@ -69,13 +70,20 @@ def cmd_run(args) -> int:
         live.start()
     svc.start_watchdog(stop)
     logging.getLogger("sdrscan").info("scanning; source %s", args.source)
+    from .runner import DongleLost
+
+    code = 0
     try:
         svc.run(stop=stop)
+    except DongleLost as exc:
+        # A clean exit: systemd restarts the container, which rescans the USB bus.
+        logging.getLogger("sdrscan").error("%s; exiting for a restart", exc)
+        code = DONGLE_LOST_EXIT
     finally:
         if live is not None:
             live.shutdown()
         svc.shutdown()
-    return 0
+    return code
 
 
 def _health_fn(svc):

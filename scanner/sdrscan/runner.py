@@ -33,11 +33,18 @@ from .voice.gate import Gate, VoiceGate, VoiceState
 
 BACKOFF_START_S = 5.0
 BACKOFF_MAX_S = 300.0
+# Consecutive failed opens (about 10 minutes of backoff) before the runner gives up, so the
+# container restarts and sees the USB bus afresh after a replug.
+MAX_OPEN_FAILURES = 8
 MAX_UNVISITED_S = 900.0  # longer than a tier B pass, so tier B tracks are not cut short
 PRUNE_EVERY_S = 86400.0
 
 
 NOW_S = 300.0
+
+
+class DongleLost(RuntimeError):
+    """The source failed to open ``MAX_OPEN_FAILURES`` times in a row."""
 
 
 class ClipSink(typing.Protocol):
@@ -118,6 +125,8 @@ class Runner:
             "last_clip_frac": 0.0,
         }
         self._open = False
+        self.backing_off = False  # inside a deliberate backoff sleep (not a hang)
+        self.open_failures = 0
         self._backoff = BACKOFF_START_S
         self._retry_at = -1e18
         self._channelizer: Channelizer | None = None
@@ -301,13 +310,23 @@ class Runner:
             return True
         now = self.clock.monotonic()
         if now < self._retry_at:
-            self.clock.sleep(self._retry_at - now)
+            self.backing_off = True
+            try:
+                self.clock.sleep(self._retry_at - now)
+            finally:
+                self.backing_off = False
         try:
             self.source.open()
         except IqSourceError as exc:
             self._fail(exc, opened=False)
+            self.open_failures += 1
+            if self.open_failures >= MAX_OPEN_FAILURES:
+                raise DongleLost(
+                    f"the radio failed to open {self.open_failures} times: {exc}"
+                ) from exc
             return False
         self._open = True
+        self.open_failures = 0
         self._backoff = BACKOFF_START_S
         if self.status["mode"] == "no_dongle":
             self.status["mode"] = "normal"
