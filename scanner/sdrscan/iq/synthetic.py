@@ -22,6 +22,7 @@ from .scene import Emitter, Scene
 
 _BLOCKER_OFFSET_HZ = 1_150_000  # outside the cropped band; only drives the ADC to the rail
 _BLOCKER_AMPLITUDE = 1.4
+_AUDIO_GRID_HZ = 48_000  # voice audio is rendered on this grid, then interpolated
 
 
 def voice_weights(f0: float, n: int = 20) -> np.ndarray:
@@ -227,7 +228,20 @@ class SyntheticSource:
         return amp * (1 + 0.8 * audio) / math.sqrt(1 + 0.32) * np.exp(1j * carrier_phase)
 
     def _audio(self, e: Emitter, t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Audio in [-1, 1] and its time integral (closed form, so phase is continuous)."""
+        """Audio in [-1, 1] and its time integral (closed form, so phase is continuous).
+
+        Voice-like audio has no energy above 3.4 kHz, so on long blocks it is computed on a
+        48 kHz grid and interpolated to the IQ rate. Twenty harmonics at 2.4 MS/s otherwise
+        made rendering slower than real time, which made dwell simulations impractical.
+        """
+        step = max(1, self.rate // _AUDIO_GRID_HZ)
+        if not e.tone_hz and step > 1 and len(t) > 4 * step:
+            coarse = np.append(t[::step], t[-1])
+            audio_c, integral_c = self._audio_exact(e, coarse)
+            return np.interp(t, coarse, audio_c), np.interp(t, coarse, integral_c)
+        return self._audio_exact(e, t)
+
+    def _audio_exact(self, e: Emitter, t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if e.tone_hz:
             w = 2 * np.pi * e.tone_hz
             return np.sin(w * t), -np.cos(w * t) / w
