@@ -106,6 +106,7 @@ class HealthMonitor:
         run: typing.Callable[..., subprocess.CompletedProcess] = subprocess.run,
         statvfs: typing.Callable[[str], typing.Any] = os.statvfs,
         notify: typing.Callable[[str], None] | None = None,
+        extra_flags: typing.Callable[[], list[str]] | None = None,
     ) -> None:
         self.cfg = cfg
         self.clock = clock
@@ -117,6 +118,7 @@ class HealthMonitor:
         self._run = run
         self._statvfs = statvfs
         self._notify = notify or _sd_notify
+        self._extra_flags = extra_flags or (lambda: [])
         self._start = clock.monotonic()
         self._level = 0
         self.last: Health | None = None
@@ -141,6 +143,7 @@ class HealthMonitor:
         st = self._status()
         if st.get("mode") == "no_dongle" and "no_dongle" not in flags:
             flags.append("dongle_busy")
+        flags.extend(f for f in self._extra_flags() if f not in flags)
         db = self.cfg.data_root / "db" / "scan.sqlite"
         db_mb = (
             sum(p.stat().st_size for p in (db, db.with_name(db.name + "-wal")) if p.exists()) / MB

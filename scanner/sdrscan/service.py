@@ -105,13 +105,24 @@ class Service:
             iq_age=self._iq_age,
             quota_used=self.clips.used_bytes,
             status=lambda: self.runner.status,
+            extra_flags=lambda: ["uplink_unconfigured"] if self.uplink_error else [],
             **fs_kw,
         )
         self.runner.mode_fn = self.health.mode
         self.ledger = Ledger(self.store, cfg.uplink, clock)
+        # A missing or bad uplink configuration (the state of a fresh install) turns pushes
+        # off; it must never stop the scan or the live page on a rig nobody can reach.
+        self.uplink_error: str | None = None
         if publisher is None and (cfg.uplink.target != "file" or cfg.uplink.path is not None):
-            target = make_target(cfg.uplink)
-            publisher = DigestPublisher(target, self.ledger, root / "outbox", clock, cfg.uplink)
+            try:
+                target = make_target(cfg.uplink)
+            except (ValueError, OSError) as exc:
+                self.uplink_error = str(exc)
+                log.error("uplink disabled: %s; scanning and the live page continue", exc)
+            else:
+                publisher = DigestPublisher(
+                    target, self.ledger, root / "outbox", clock, cfg.uplink
+                )
         self.publisher = publisher
         self._stt_fixed = stt
         self.prose = prose or make_prose(cfg.prose)
@@ -194,11 +205,17 @@ class Service:
             site_id=self.cfg.site_id,
             include_transcripts=self.cfg.uplink.include_transcripts,
             now_state=self.runner.now_state(),
-            uplink=self.ledger.to_dict(),
+            uplink=self._uplink_state(),
         )
         if now - rollup.day_of(now) < rollup.H:  # once a day, just after midnight UTC
             digest["prose"] = self.prose.rewrite(digest, mode=self.health.mode())
         return digest
+
+    def _uplink_state(self) -> dict:
+        state = self.ledger.to_dict()
+        if self.uplink_error:
+            state["state"] = "unconfigured"
+        return state
 
     def publish_digest(self) -> dict:
         digest = self.make_digest()
