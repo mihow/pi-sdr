@@ -225,6 +225,14 @@ class Store:
         )
         return clip_id
 
+    def evict_clip(self, clip_id: int, t: float) -> None:
+        self._queue(
+            "UPDATE clips SET path = NULL, evicted_at = ? WHERE id = ?", (int(t), int(clip_id))
+        )
+
+    def update_clip_tier(self, clip_id: int, tier: int) -> None:
+        self._queue("UPDATE clips SET tier = ? WHERE id = ?", (int(tier), int(clip_id)))
+
     def add_health(self, h: dict) -> None:
         row = tuple(h.get(c) for c in _HEALTH_COLS)
         row = (int(row[0]),) + row[1:]
