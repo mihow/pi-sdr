@@ -30,3 +30,22 @@ def sys_root(tmp_path: Path) -> Path:
     (root / "class/thermal/thermal_zone0").mkdir(parents=True)
     (root / "class/thermal/thermal_zone0/temp").write_text("45000\n")
     return root
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip tests whose hardware, fixtures or tools are absent, so the default run is hermetic."""
+    import importlib.util
+    import os
+
+    skips = {
+        "hw": (os.environ.get("SDRSCAN_HW") != "1", "set SDRSCAN_HW=1 with a dongle attached"),
+        "fixtures": (
+            not os.environ.get("SDRSCAN_IQ_FIXTURES"),
+            "set SDRSCAN_IQ_FIXTURES to a directory of recorded IQ",
+        ),
+        "browser": (importlib.util.find_spec("playwright") is None, "Playwright not installed"),
+    }
+    for item in items:
+        for marker, (skip, reason) in skips.items():
+            if skip and marker in item.keywords:
+                item.add_marker(pytest.mark.skip(reason=reason))
