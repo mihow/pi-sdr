@@ -52,9 +52,23 @@ class LlamaCliProse:
         compact = {k: digest[k] for k in sorted(digest) if k not in {"how", "prose", "labels"}}
         prompt = PROMPT.format(digest=json.dumps(compact, sort_keys=True, separators=(",", ":")))
         return [
-            "nice", "-n", "19", str(self.binary), "-m", str(self.model), "-t", str(self.threads),
-            "-n", "300", "--temp", "0.2", "-no-cnv", "--no-display-prompt", "-p", prompt,
-        ]  # fmt: skip
+            "nice",
+            "-n",
+            "19",
+            str(self.binary),
+            "-m",
+            str(self.model),
+            "-t",
+            str(self.threads),
+            "-n",
+            "300",
+            "--temp",
+            "0.2",
+            "-no-cnv",
+            "--no-display-prompt",
+            "-p",
+            prompt,
+        ]
 
     def rewrite(self, digest: dict, mode: str = "normal") -> str | None:
         if mode != "normal":

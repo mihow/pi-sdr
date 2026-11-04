@@ -41,15 +41,23 @@ def _variants(tmp_path, vclock) -> dict[str, dict]:
         n["first_ts"] += shift
     for u in week["unusual"]:
         u["hour"] += shift
-    week["recent"][0]["text"] = "Engine two is clear of the north gate, returning to the station now"
+    week["recent"][0]["text"] = (
+        "Engine two is clear of the north gate, returning to the station now"
+    )
     week["recent"][0]["conf"] = 0.8
     week["prose"] = "Land mobile and GMRS were busiest. One new FRS channel appeared today."
     stale = copy.deepcopy(week)
     stale["generated_at"] = now - 3 * 3600
     red = copy.deepcopy(week)
     red["generated_at"] = now - 7 * 3600
-    red["health"].update(dongle=False, mode="critical", temp_c=83.4, disk_free_pct=4.2,
-                         flags=["disk_low", "no_dongle"], coverage_pct=31.0)  # fmt: skip
+    red["health"].update(
+        dongle=False,
+        mode="critical",
+        temp_c=83.4,
+        disk_free_pct=4.2,
+        flags=["disk_low", "no_dongle"],
+        coverage_pct=31.0,
+    )
     from sdrscan.store import Store
 
     store = Store.open(tmp_path / "empty.sqlite", vclock)
@@ -128,7 +136,8 @@ AUDIT = """() => {
     .map(e => [e.textContent.trim(), e.getBoundingClientRect()])
     .filter(([, r]) => r.width < 44 || r.height < 44).map(([t]) => t);
   const wide = [...document.querySelectorAll('main *')]
-    .filter(e => e.getBoundingClientRect().right > se.clientWidth + 0.5).map(e => e.className || e.tagName);
+    .filter(e => e.getBoundingClientRect().right > se.clientWidth + 0.5)
+    .map(e => e.className || e.tagName);
   return {sw: se.scrollWidth, cw: se.clientWidth, small, wide: wide.slice(0, 5),
           age: document.getElementById('age').textContent,
           health: document.getElementById('health').className};
@@ -141,16 +150,21 @@ def test_dashboard_fits_phones_in_both_themes(site, browsers, variant):
     for engine, browser in browsers:
         for width in WIDTHS:
             for scheme in ("light", "dark"):
-                ctx = browser.new_context(viewport={"width": width, "height": 800},
-                                          color_scheme=scheme, device_scale_factor=2)  # fmt: skip
+                ctx = browser.new_context(
+                    viewport={"width": width, "height": 800},
+                    color_scheme=scheme,
+                    device_scale_factor=2,
+                )
                 page = ctx.new_page()
-                errors, requests = [], []
-                page.on("console", lambda m: m.type == "error" and errors.append(m.text))
-                page.on("pageerror", lambda e: errors.append(str(e)))
-                page.on("request", lambda r: requests.append(r.url))
+                errors: list[str] = []
+                requests: list[str] = []
+                page.on("console", lambda m, out=errors: m.type == "error" and out.append(m.text))
+                page.on("pageerror", lambda e, out=errors: out.append(str(e)))
+                page.on("request", lambda r, out=requests: out.append(r.url))
                 page.goto(f"{site}/{variant}/index.html")
-                page.wait_for_function("!document.getElementById('age').textContent"
-                                       ".startsWith('Loading')")  # fmt: skip
+                page.wait_for_function(
+                    "!document.getElementById('age').textContent.startsWith('Loading')"
+                )
                 a = page.evaluate(AUDIT)
                 tag = f"{variant}-{engine}-{width}-{scheme}"
                 page.screenshot(path=str(SCREENS / f"{tag}.png"), full_page=True)
@@ -161,8 +175,12 @@ def test_dashboard_fits_phones_in_both_themes(site, browsers, variant):
                 paths = sorted({u.split(site)[1] for u in requests})
                 assert paths == [f"/{variant}/digest.json.gz", f"/{variant}/index.html"], paths
                 assert "Could not load" not in a["age"], (tag, a["age"])
-                want = {"week": "health", "empty": "health", "stale": "health stale",
-                        "red": "health off"}[variant]  # fmt: skip
+                want = {
+                    "week": "health",
+                    "empty": "health",
+                    "stale": "health stale",
+                    "red": "health off",
+                }[variant]
                 assert a["health"] == want, (tag, a)
 
 

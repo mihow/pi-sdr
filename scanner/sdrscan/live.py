@@ -108,18 +108,29 @@ class LiveServer:
         for r in rows:
             cells[(r["hour_ts"] - first) // H] = int(round(r["active_s"]))
         return {
-            "hz": hz, "w": window, "first_hour": first, "active_s": cells,
+            "hz": hz,
+            "w": window,
+            "first_hour": first,
+            "active_s": cells,
             "recent": [
-                {"t": r["t_start"], "dur_s": round(r["dur_ms"] / 1000, 1), "cls": r["class"],
-                 "snr": r["peak_snr_db"], "clip": r["clip_id"]}
+                {
+                    "t": r["t_start"],
+                    "dur_s": round(r["dur_ms"] / 1000, 1),
+                    "cls": r["class"],
+                    "snr": r["peak_snr_db"],
+                    "clip": r["clip_id"],
+                }
                 for r in txs
             ],
-        }  # fmt: skip
+        }
 
     def now_section(self) -> dict:
         d = json.loads(self.digest_bytes())
-        return {"generated_at": d.get("generated_at"), "now": d.get("now"),
-                "health": d.get("health")}  # fmt: skip
+        return {
+            "generated_at": d.get("generated_at"),
+            "now": d.get("now"),
+            "health": d.get("health"),
+        }
 
     # -- HTTP --------------------------------------------------------------------------
     def _handler(self):
@@ -155,19 +166,32 @@ class LiveServer:
         path = url.path
         charged = self._charged(h)
         if charged and self.ledger.state() == "capped" and path != "/healthz":
-            return self._send(h, 429, b'{"error":"monthly data cap reached"}', "application/json",
-                              charged=charged, cache=False)  # fmt: skip
+            return self._send(
+                h,
+                429,
+                b'{"error":"monthly data cap reached"}',
+                "application/json",
+                charged=charged,
+                cache=False,
+            )
         try:
             if path in ("/", "/index.html"):
                 return self._send(h, 200, self.page, "text/html; charset=utf-8", charged=charged)
             if path in ("/api/digest", "/digest.json"):
                 return self._send(h, 200, self.digest_bytes(), "application/json", charged=charged)
             if path == "/api/now":
-                return self._send(h, 200, _json(self.now_section()), "application/json",
-                                  charged=charged)  # fmt: skip
+                return self._send(
+                    h, 200, _json(self.now_section()), "application/json", charged=charged
+                )
             if path == "/healthz":
-                return self._send(h, 200, _json(self.health_fn()), "application/json",
-                                  charged=charged, cache=False)  # fmt: skip
+                return self._send(
+                    h,
+                    200,
+                    _json(self.health_fn()),
+                    "application/json",
+                    charged=charged,
+                    cache=False,
+                )
             m = _CHAN.match(path)
             if m:
                 w = urllib.parse.parse_qs(url.query).get("w", ["day"])[0]
@@ -178,10 +202,12 @@ class LiveServer:
                 return self._clip(h, int(m.group(1)), charged)
         except Exception:  # noqa: BLE001 - one bad request must not stop the server
             log.exception("live request failed")
-            return self._send(h, 500, b'{"error":"internal"}', "application/json",
-                              charged=charged, cache=False)  # fmt: skip
-        return self._send(h, 404, b'{"error":"not found"}', "application/json",
-                          charged=charged, cache=False)  # fmt: skip
+            return self._send(
+                h, 500, b'{"error":"internal"}', "application/json", charged=charged, cache=False
+            )
+        return self._send(
+            h, 404, b'{"error":"not found"}', "application/json", charged=charged, cache=False
+        )
 
     def _send(self, h, status, body: bytes, ctype: str, *, charged: bool, cache: bool = True):
         etag = '"' + hashlib.sha256(body).hexdigest()[:20] + '"'
@@ -193,20 +219,35 @@ class LiveServer:
             extra = {"Content-Type": ctype}
             if gz:
                 extra["Content-Encoding"] = "gzip"
-        headers = {"ETag": etag, "Cache-Control": "no-cache" if cache else "no-store",
-                   "Vary": "Accept-Encoding", "Content-Length": str(len(payload)), **extra}  # fmt: skip
+        headers = {
+            "ETag": etag,
+            "Cache-Control": "no-cache" if cache else "no-store",
+            "Vary": "Accept-Encoding",
+            "Content-Length": str(len(payload)),
+            **extra,
+        }
         self._write(h, status, headers, payload, charged)
 
     def _clip(self, h, clip_id: int, charged: bool) -> None:
         path = self.clips.path_for(clip_id)
         if path is None or not path.exists():
-            return self._send(h, 404, b'{"error":"clip evicted or unknown"}', "application/json",
-                              charged=charged, cache=False)  # fmt: skip
+            return self._send(
+                h,
+                404,
+                b'{"error":"clip evicted or unknown"}',
+                "application/json",
+                charged=charged,
+                cache=False,
+            )
         data = path.read_bytes()
         etag = '"' + hashlib.sha256(data).hexdigest()[:20] + '"'
         ctype = "audio/ogg" if path.suffix == ".opus" else "audio/wav"
-        headers = {"ETag": etag, "Accept-Ranges": "bytes", "Content-Type": ctype,
-                   "Cache-Control": "private, max-age=86400"}  # fmt: skip
+        headers = {
+            "ETag": etag,
+            "Accept-Ranges": "bytes",
+            "Content-Type": ctype,
+            "Cache-Control": "private, max-age=86400",
+        }
         if h.headers.get("If-None-Match") == etag:
             headers["Content-Length"] = "0"
             return self._write(h, 304, headers, b"", charged)

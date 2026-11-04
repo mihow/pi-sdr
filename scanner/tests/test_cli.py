@@ -21,8 +21,20 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_simulate_writes_db_digest_and_page(tmp_path, capsys):
     out = tmp_path / "sim"
     t0 = time.monotonic()
-    assert main(["simulate", "--scene", str(SCENES / "week_basic.yaml"), "--hours", "1",
-                 "--out", str(out)]) == 0  # fmt: skip
+    assert (
+        main(
+            [
+                "simulate",
+                "--scene",
+                str(SCENES / "week_basic.yaml"),
+                "--hours",
+                "1",
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
     assert time.monotonic() - t0 < 30
     report = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert (out / "scan.sqlite").exists() and (out / "index.html").exists()
@@ -35,12 +47,31 @@ def test_simulate_writes_db_digest_and_page(tmp_path, capsys):
 
 def test_digest_and_dashboard_commands(tmp_path, capsys):
     out = tmp_path / "sim"
-    main(["simulate", "--scene", str(SCENES / "week_basic.yaml"), "--hours", "0.3",
-          "--out", str(out)])  # fmt: skip
+    main(
+        [
+            "simulate",
+            "--scene",
+            str(SCENES / "week_basic.yaml"),
+            "--hours",
+            "0.3",
+            "--out",
+            str(out),
+        ]
+    )
     assert main(["digest", "--db", str(out / "scan.sqlite"), "--out", str(tmp_path / "d")]) == 0
     assert json.loads((tmp_path / "d" / "digest.json").read_text())["v"] == 1
-    assert main(["dashboard", "--digest", str(tmp_path / "d" / "digest.json.gz"),
-                 "--out", str(tmp_path / "w")]) == 0  # fmt: skip
+    assert (
+        main(
+            [
+                "dashboard",
+                "--digest",
+                str(tmp_path / "d" / "digest.json.gz"),
+                "--out",
+                str(tmp_path / "w"),
+            ]
+        )
+        == 0
+    )
     assert (tmp_path / "w" / "index.html").exists()
 
 
@@ -55,12 +86,27 @@ def test_run_synthetic_exits_cleanly_on_sigterm(tmp_path, sys_root):
     cfg = tmp_path / "c.yaml"
     cfg.write_text(f"data_root: {tmp_path / 'data'}\nstage_root: {tmp_path / 'stage'}\n")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "sdrscan", "run", "--config", str(cfg), "--source", "synthetic",
-         "--scene", str(SCENES / "week_basic.yaml"), "--spectrum", "psd",
-         "--sys-root", str(sys_root)],
-        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        [
+            sys.executable,
+            "-m",
+            "sdrscan",
+            "run",
+            "--config",
+            str(cfg),
+            "--source",
+            "synthetic",
+            "--scene",
+            str(SCENES / "week_basic.yaml"),
+            "--spectrum",
+            "psd",
+            "--sys-root",
+            str(sys_root),
+        ],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         env={**os.environ, "PYTHONPATH": str(ROOT)},
-    )  # fmt: skip
+    )
     db = tmp_path / "data" / "db" / "scan.sqlite"
     deadline = time.monotonic() + 30
     while not db.exists() and time.monotonic() < deadline:

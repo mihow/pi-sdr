@@ -45,8 +45,9 @@ class _FakeRun:
 
 def test_whisper_builds_argv_and_parses_json(tmp_path):
     run = _FakeRun(WHISPER_JSON)
-    stt = WhisperCppStt(Path("/opt/whisper-cli"), Path("/opt/ggml-tiny.en.bin"), work_dir=tmp_path,
-                        run=run)  # fmt: skip
+    stt = WhisperCppStt(
+        Path("/opt/whisper-cli"), Path("/opt/ggml-tiny.en.bin"), work_dir=tmp_path, run=run
+    )
     tr = stt.transcribe(voice(2.0))
     argv = run.argv
     assert argv[0] == "/opt/whisper-cli"
@@ -85,6 +86,9 @@ def test_make_stt_respects_config_and_mode(tmp_path):
 
 @pytest.mark.skipif(not os.environ.get("SDRSCAN_WHISPER_BIN"), reason="SDRSCAN_WHISPER_BIN unset")
 def test_live_whisper_binary_runs(tmp_path):  # pragma: no cover - needs a local build
-    stt = WhisperCppStt(Path(os.environ["SDRSCAN_WHISPER_BIN"]),
-                        Path(os.environ["SDRSCAN_WHISPER_MODEL"]), work_dir=tmp_path)  # fmt: skip
+    stt = WhisperCppStt(
+        Path(os.environ["SDRSCAN_WHISPER_BIN"]),
+        Path(os.environ["SDRSCAN_WHISPER_MODEL"]),
+        work_dir=tmp_path,
+    )
     assert stt.transcribe(voice(2.0)) is not None

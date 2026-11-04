@@ -89,10 +89,17 @@ def _split(t_start: int, dur_ms: int) -> list[tuple[int, int, int, int]]:
 def _tx_parts(t_start: int, dur_ms: int, cls: str | None, snr: float | None):
     voice = cls == "voice"
     for i, (h, ms, first, last) in enumerate(_split(t_start, dur_ms)):
-        yield h, ms / 1000, int(i == 0), int(voice and i == 0), (ms / 1000 if voice else 0.0), (
-            snr,
-            first,
-            last,
+        yield (
+            h,
+            ms / 1000,
+            int(i == 0),
+            int(voice and i == 0),
+            (ms / 1000 if voice else 0.0),
+            (
+                snr,
+                first,
+                last,
+            ),
         )
 
 
@@ -270,9 +277,13 @@ def _hour_window(store: Store, now: float) -> WindowStats:
         voice = r["class"] == "voice"
         counted = int(r["t_start"] >= t0)
         chans.setdefault(r["hz"], ChanStats()).add(
-            active, counted, int(voice and counted), active if voice else 0.0,
-            r["peak_snr_db"], r["t_end"],
-        )  # fmt: skip
+            active,
+            counted,
+            int(voice and counted),
+            active if voice else 0.0,
+            r["peak_snr_db"],
+            r["t_end"],
+        )
         cells = series.setdefault(r["hz"], [0] * 12)
         for i in range(12):
             c0 = int(t0 * 1000) + i * cell * 1000
@@ -292,9 +303,13 @@ def _day_window(store: Store, now: float) -> WindowStats:
         "SELECT * FROM rollup_hour WHERE hour_ts >= ? AND hour_ts <= ?", (first, h_now)
     ):
         chans.setdefault(r["hz"], ChanStats()).add(
-            r["active_s"], r["tx_count"], r["voice_tx"], r["voice_s"], r["max_snr_db"],
+            r["active_s"],
+            r["tx_count"],
+            r["voice_tx"],
+            r["voice_s"],
+            r["max_snr_db"],
             r["last_ts"],
-        )  # fmt: skip
+        )
         cells = series.setdefault(r["hz"], [0] * 24)
         cells[(r["hour_ts"] - first) // H] += int(round(r["active_s"]))
     return WindowStats("day", first, now, chans, series, H)

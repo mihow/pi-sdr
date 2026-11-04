@@ -32,10 +32,19 @@ END = T0 + 7 * DAY
 def _tx(plan: BandPlan, hz: int, t: float, dur: float, cls: str = "voice", snr: float = 21.3):
     ch = plan.channel_for(hz)
     return Transmission(
-        hz=ch.hz, band=ch.band, mode=ch.mode, t_start=t, t_end=t + dur,
-        dur_ms=int(round(dur * 1000)), peak_snr_db=snr, med_snr_db=snr - 4.2, floor_db=-51.0,
-        bw_hz=11_000.0, source="survey", cls=cls,
-    )  # fmt: skip
+        hz=ch.hz,
+        band=ch.band,
+        mode=ch.mode,
+        t_start=t,
+        t_end=t + dur,
+        dur_ms=int(round(dur * 1000)),
+        peak_snr_db=snr,
+        med_snr_db=snr - 4.2,
+        floor_db=-51.0,
+        bw_hz=11_000.0,
+        source="survey",
+        cls=cls,
+    )
 
 
 def _add(store: Store, tx: Transmission) -> int:
@@ -71,10 +80,22 @@ def week_events(plan: BandPlan) -> list[Transmission]:
 
 def fake_health(now: float = END) -> Health:
     return Health(
-        ts=now, up_s=7 * DAY, temp_c=52.4, throttled=0, mode="normal", flags=[],
-        dongle_ok=True, iq_age_s=0.2, disk_free_pct=61.3, disk_free_mb=17_800.0,
-        quota_used_mb=212.5, quota_mb=2048.0, db_mb=48.2, clock_ok=True, rss_mb=142.0,
-    )  # fmt: skip
+        ts=now,
+        up_s=7 * DAY,
+        temp_c=52.4,
+        throttled=0,
+        mode="normal",
+        flags=[],
+        dongle_ok=True,
+        iq_age_s=0.2,
+        disk_free_pct=61.3,
+        disk_free_mb=17_800.0,
+        quota_used_mb=212.5,
+        quota_mb=2048.0,
+        db_mb=48.2,
+        clock_ok=True,
+        rss_mb=142.0,
+    )
 
 
 def build_week(store: Store, plan: BandPlan, vclock) -> None:
@@ -88,12 +109,19 @@ def build_week(store: Store, plan: BandPlan, vclock) -> None:
     store.mark_channel(SPUR, band=plan.band_for(SPUR).id, spur=True, t=T0)
     for i, (tx_id, tx) in enumerate(sorted(clip_tx.items())):
         cid = store.add_clip(
-            hz=tx.hz, t_start=tx.t_start, dur_ms=tx.dur_ms, nbytes=12_000, codec="opus",
-            path=f"clips/x/{tx.hz}-{int(tx.t_start)}.opus", tier=1, sha256="0" * 64,
-        )  # fmt: skip
+            hz=tx.hz,
+            t_start=tx.t_start,
+            dur_ms=tx.dur_ms,
+            nbytes=12_000,
+            codec="opus",
+            path=f"clips/x/{tx.hz}-{int(tx.t_start)}.opus",
+            tier=1,
+            sha256="0" * 64,
+        )
         conf = 0.4 if i % 4 == 3 else 0.88
-        store.add_transcript(cid, tx_id, "fake", f"unit {i} copy, moving to staging", conf,
-                             0.3, tx.t_end)  # fmt: skip
+        store.add_transcript(
+            cid, tx_id, "fake", f"unit {i} copy, moving to staging", conf, 0.3, tx.t_end
+        )
     store.flush()
     for h in range(7 * 24):
         hour = int(T0 + h * H)

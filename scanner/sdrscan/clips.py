@@ -73,10 +73,21 @@ class OpusEncoder:
             wav = Path(tmp) / "in.wav"
             _write_wav(wav, to_pcm16(pcm))
             subprocess.run(
-                [self.binary, "--quiet", "--bitrate", str(self.bitrate), "--framesize", "60",
-                 "--speech", str(wav), str(out)],
-                check=True, capture_output=True, timeout=120,
-            )  # fmt: skip
+                [
+                    self.binary,
+                    "--quiet",
+                    "--bitrate",
+                    str(self.bitrate),
+                    "--framesize",
+                    "60",
+                    "--speech",
+                    str(wav),
+                    str(out),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=120,
+            )
 
 
 class WavEncoder:
@@ -210,10 +221,16 @@ class ClipStore:
         tier = self._tier(meta)
         rel = str(final.relative_to(self.data_root))
         clip_id = self.store.add_clip(
-            hz=w.hz, t_start=w.t_start, dur_ms=int(round(w.seconds * 1000)), nbytes=len(data),
-            codec=self.encoder.codec, path=rel, tier=tier, sha256=hashlib.sha256(data).hexdigest(),
+            hz=w.hz,
+            t_start=w.t_start,
+            dur_ms=int(round(w.seconds * 1000)),
+            nbytes=len(data),
+            codec=self.encoder.codec,
+            path=rel,
+            tier=tier,
+            sha256=hashlib.sha256(data).hexdigest(),
             pinned=pinned,
-        )  # fmt: skip
+        )
         self._clips[clip_id] = _Clip(clip_id, w.hz, int(w.t_start), len(data), tier, rel)
         self.enforce()
         return clip_id if clip_id in self._clips else None

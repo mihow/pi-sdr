@@ -37,14 +37,17 @@ def test_thermal_modes_with_hysteresis(sys_root, vclock, tmp_path):
         hm.sample()
         seen.append(hm.mode())
     assert seen == [
-        "normal", "hot", "very_hot", "critical",
+        "normal",
+        "hot",
+        "very_hot",
+        "critical",
         "critical",  # 80 is not below 82 - 3
         "very_hot",  # 78.5 is below 79, and still at least 78
         "very_hot",  # 76 is not below 75
         "hot",
         "hot",  # 68 is not below 67
         "normal",
-    ]  # fmt: skip
+    ]
 
 
 def test_throttle_flag_means_very_hot(sys_root, vclock, tmp_path):

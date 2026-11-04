@@ -21,15 +21,23 @@ from .test_clips import FakeFs
 def live(tmp_path, vclock):
     store = Store.open(tmp_path / "scan.sqlite", vclock)
     store.migrate()
-    clips = ClipStore(store, QuotaConfig(), data_root=tmp_path / "d", stage_root=tmp_path / "s",
-                      clock=vclock, encoder=WavEncoder(), statvfs=FakeFs())  # fmt: skip
+    clips = ClipStore(
+        store,
+        QuotaConfig(),
+        data_root=tmp_path / "d",
+        stage_root=tmp_path / "s",
+        clock=vclock,
+        encoder=WavEncoder(),
+        statvfs=FakeFs(),
+    )
     w = clips.begin(462_562_500, vclock.now())
     w.write(voice(1.0))
     clip_id = clips.finish(w, {"class": "voice"})
     ledger = Ledger(store, UplinkConfig(cap_bytes=1_000_000), vclock)
     digest = {"v": 1, "generated_at": int(vclock.now()), "now": {"active": []}, "health": {}}
-    srv = LiveServer(store, clips, ledger, "127.0.0.1", 0, digest_fn=lambda: digest,
-                     charge_loopback=True)  # fmt: skip
+    srv = LiveServer(
+        store, clips, ledger, "127.0.0.1", 0, digest_fn=lambda: digest, charge_loopback=True
+    )
     srv.start()
     yield srv, ledger, clip_id, f"http://127.0.0.1:{srv.port}"
     srv.shutdown()

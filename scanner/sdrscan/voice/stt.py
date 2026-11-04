@@ -112,9 +112,20 @@ class WhisperCppStt:
     def argv(self, wav: Path, base: Path, seconds: float) -> list[str]:
         ctx = min(1500, int(math.ceil(seconds * 50)) + 64)
         return [
-            str(self.binary), "-m", str(self.model), "-t", str(self.threads), "-ac", str(ctx),
-            "-nt", "-ojf", "-of", str(base), "-f", str(wav),
-        ]  # fmt: skip
+            str(self.binary),
+            "-m",
+            str(self.model),
+            "-t",
+            str(self.threads),
+            "-ac",
+            str(ctx),
+            "-nt",
+            "-ojf",
+            "-of",
+            str(base),
+            "-f",
+            str(wav),
+        ]
 
     def transcribe(self, pcm: np.ndarray) -> Transcript | None:
         audio = sosfilt(self._sos, np.asarray(pcm, dtype=np.float64))

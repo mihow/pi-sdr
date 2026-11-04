@@ -30,6 +30,4 @@ def fm_noise(seconds: float, seed: int = 1) -> np.ndarray:
 
 def dtmf(seconds: float, lo: float = 697.0, hi: float = 1209.0) -> np.ndarray:
     t = np.arange(int(seconds * AUDIO_RATE)) / AUDIO_RATE
-    return (0.4 * np.sin(2 * np.pi * lo * t) + 0.4 * np.sin(2 * np.pi * hi * t)).astype(
-        np.float32
-    )
+    return (0.4 * np.sin(2 * np.pi * lo * t) + 0.4 * np.sin(2 * np.pi * hi * t)).astype(np.float32)

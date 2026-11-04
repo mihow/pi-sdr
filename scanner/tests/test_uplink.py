@@ -82,8 +82,9 @@ def _publisher(server, store, vclock, tmp_path, **cfg):
     return DigestPublisher(target, ledger, tmp_path / "outbox", vclock, ucfg), ledger
 
 
-def test_hourly_publish_sends_one_gzip_object_and_charges_the_ledger(server, store, vclock,
-                                                                    tmp_path):  # fmt: skip
+def test_hourly_publish_sends_one_gzip_object_and_charges_the_ledger(
+    server, store, vclock, tmp_path
+):
     pub, ledger = _publisher(server, store, vclock, tmp_path)
     res = pub.publish(_digest(vclock.now()), vclock.now())
     assert res.sent == ["digest.json.gz"]
@@ -133,8 +134,10 @@ def test_outage_queues_and_coalesces_on_recovery(server, store, vclock, tmp_path
     # Missed days 0 and 1 (complete) get one day file each; today gets the newest digest.
     assert res.sent == ["day-20260601.json.gz", "day-20260602.json.gz", "digest.json.gz"]
     assert [p.split("?")[0] for p, _, _ in server.got] == [
-        "/p/day-20260601.json.gz", "/p/day-20260602.json.gz", "/p/digest.json.gz"
-    ]  # fmt: skip
+        "/p/day-20260601.json.gz",
+        "/p/day-20260602.json.gz",
+        "/p/digest.json.gz",
+    ]
     assert not list((tmp_path / "outbox").glob("digest-*.json.gz"))[1:]
 
 

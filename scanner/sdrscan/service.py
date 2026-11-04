@@ -78,16 +78,35 @@ class Service:
         self.store.migrate()
         self.store.set_meta("site_id", cfg.site_id)
         fs_kw = {"statvfs": statvfs} if statvfs is not None else {}
-        self.clips = ClipStore(self.store, cfg.quota, data_root=root, stage_root=cfg.stage_root,
-                               clock=clock, encoder=encoder, **fs_kw)  # fmt: skip
+        self.clips = ClipStore(
+            self.store,
+            cfg.quota,
+            data_root=root,
+            stage_root=cfg.stage_root,
+            clock=clock,
+            encoder=encoder,
+            **fs_kw,
+        )
         self.runner = Runner(
-            cfg=cfg, plan=self.plan, source=source, clock=clock, store=self.store,
-            clips=self.clips, on_tx=self._on_tx, spectrum=spectrum, **(runner_kw or {}),
-        )  # fmt: skip
+            cfg=cfg,
+            plan=self.plan,
+            source=source,
+            clock=clock,
+            store=self.store,
+            clips=self.clips,
+            on_tx=self._on_tx,
+            spectrum=spectrum,
+            **(runner_kw or {}),
+        )
         self.health = HealthMonitor(
-            cfg, clock, sys_root, iq_age=self._iq_age, quota_used=self.clips.used_bytes,
-            status=lambda: self.runner.status, **fs_kw,
-        )  # fmt: skip
+            cfg,
+            clock,
+            sys_root,
+            iq_age=self._iq_age,
+            quota_used=self.clips.used_bytes,
+            status=lambda: self.runner.status,
+            **fs_kw,
+        )
         self.runner.mode_fn = self.health.mode
         self.ledger = Ledger(self.store, cfg.uplink, clock)
         if publisher is None and (cfg.uplink.target != "file" or cfg.uplink.path is not None):
@@ -168,10 +187,15 @@ class Service:
         now = self.clock.now()
         h = self.health.last or self.health.sample()
         digest = build_digest(
-            self.store, h, now, plan=self.plan, site_id=self.cfg.site_id,
+            self.store,
+            h,
+            now,
+            plan=self.plan,
+            site_id=self.cfg.site_id,
             include_transcripts=self.cfg.uplink.include_transcripts,
-            now_state=self.runner.now_state(), uplink=self.ledger.to_dict(),
-        )  # fmt: skip
+            now_state=self.runner.now_state(),
+            uplink=self.ledger.to_dict(),
+        )
         if now - rollup.day_of(now) < rollup.H:  # once a day, just after midnight UTC
             digest["prose"] = self.prose.rewrite(digest, mode=self.health.mode())
         return digest
@@ -216,8 +240,9 @@ class Service:
         tr = self._stt().transcribe(pcm16.astype(np.float32) / 32767)
         if tr is None:
             return
-        self.store.add_transcript(clip_id, tx_id, tr.engine, tr.text, tr.confidence, tr.rtf,
-                                  self.clock.now())  # fmt: skip
+        self.store.add_transcript(
+            clip_id, tx_id, tr.engine, tr.text, tr.confidence, tr.rtf, self.clock.now()
+        )
         self.clips.set_tier(clip_id, {"class": "voice", "confidence": tr.confidence})
 
     def _drain_stt(self) -> None:

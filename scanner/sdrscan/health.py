@@ -57,26 +57,39 @@ class Health:
 
     def to_row(self) -> dict:
         return {
-            "ts": int(self.ts), "temp_c": self.temp_c, "throttled": self.throttled,
-            "disk_free_mb": self.disk_free_mb, "quota_used_mb": round(self.quota_used_mb, 1),
-            "dongle_ok": int(self.dongle_ok), "drops": self.drops,
-            "clip_frac": round(self.clip_frac, 4), "mode": self.mode,
+            "ts": int(self.ts),
+            "temp_c": self.temp_c,
+            "throttled": self.throttled,
+            "disk_free_mb": self.disk_free_mb,
+            "quota_used_mb": round(self.quota_used_mb, 1),
+            "dongle_ok": int(self.dongle_ok),
+            "drops": self.drops,
+            "clip_frac": round(self.clip_frac, 4),
+            "mode": self.mode,
             "clock_ok": int(self.clock_ok),
-        }  # fmt: skip
+        }
 
     def to_digest(self) -> dict:
         def r1(x):
             return None if x is None else round(float(x), 1)
 
         return {
-            "up_s": int(self.up_s), "temp_c": r1(self.temp_c), "mode": self.mode,
-            "flags": sorted(self.flags), "dongle": self.dongle_ok,
-            "iq_age_s": r1(self.iq_age_s), "disk_free_pct": r1(self.disk_free_pct),
-            "quota_used_mb": r1(self.quota_used_mb), "quota_mb": r1(self.quota_mb),
-            "db_mb": r1(self.db_mb), "clock_ok": self.clock_ok, "rss_mb": r1(self.rss_mb),
-            "errors": int(self.errors), "clip_pct": r1(self.clip_frac * 100),
+            "up_s": int(self.up_s),
+            "temp_c": r1(self.temp_c),
+            "mode": self.mode,
+            "flags": sorted(self.flags),
+            "dongle": self.dongle_ok,
+            "iq_age_s": r1(self.iq_age_s),
+            "disk_free_pct": r1(self.disk_free_pct),
+            "quota_used_mb": r1(self.quota_used_mb),
+            "quota_mb": r1(self.quota_mb),
+            "db_mb": r1(self.db_mb),
+            "clock_ok": self.clock_ok,
+            "rss_mb": r1(self.rss_mb),
+            "errors": int(self.errors),
+            "clip_pct": r1(self.clip_frac * 100),
             "version": __version__,
-        }  # fmt: skip
+        }
 
 
 class HealthMonitor:
@@ -129,9 +142,9 @@ class HealthMonitor:
         if st.get("mode") == "no_dongle" and "no_dongle" not in flags:
             flags.append("dongle_busy")
         db = self.cfg.data_root / "db" / "scan.sqlite"
-        db_mb = sum(
-            p.stat().st_size for p in (db, db.with_name(db.name + "-wal")) if p.exists()
-        ) / MB
+        db_mb = (
+            sum(p.stat().st_size for p in (db, db.with_name(db.name + "-wal")) if p.exists()) / MB
+        )
         h = Health(
             ts=now,
             up_s=self.clock.monotonic() - self._start,

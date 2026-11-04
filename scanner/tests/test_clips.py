@@ -39,9 +39,14 @@ def env(tmp_path, vclock):
     def make(quota=1_000_000, nbytes=50 * KB, **kw):
         cfg = QuotaConfig(clip_quota_bytes=quota, **kw)
         return ClipStore(
-            store, cfg, data_root=tmp_path / "data", stage_root=tmp_path / "stage",
-            clock=vclock, encoder=FakeEncoder(nbytes), statvfs=fs,
-        )  # fmt: skip
+            store,
+            cfg,
+            data_root=tmp_path / "data",
+            stage_root=tmp_path / "stage",
+            clock=vclock,
+            encoder=FakeEncoder(nbytes),
+            statvfs=fs,
+        )
 
     return store, fs, make, tmp_path
 

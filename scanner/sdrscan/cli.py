@@ -57,8 +57,15 @@ def cmd_run(args) -> int:
     signal.signal(signal.SIGINT, on_signal)
     live = None
     if cfg.live.enabled and cfg.live.bind_address:
-        live = LiveServer(svc.store, svc.clips, svc.ledger, cfg.live.bind_address, cfg.live.port,
-                          digest_fn=svc.make_digest, health_fn=_health_fn(svc))  # fmt: skip
+        live = LiveServer(
+            svc.store,
+            svc.clips,
+            svc.ledger,
+            cfg.live.bind_address,
+            cfg.live.port,
+            digest_fn=svc.make_digest,
+            health_fn=_health_fn(svc),
+        )
         live.start()
     svc.start_watchdog(stop)
     logging.getLogger("sdrscan").info("scanning; source %s", args.source)
@@ -102,16 +109,30 @@ def cmd_simulate(args) -> int:
             "duty": DutyConfig(**{**base.duty.__dict__, "dwell_block_s": 0.5})
             if args.spectrum == "psd"
             else base.duty,
-            "uplink": UplinkConfig(**{**base.uplink.__dict__, "target": "file", "path": out,
-                                      "include_transcripts": True}),  # fmt: skip
+            "uplink": UplinkConfig(
+                **{
+                    **base.uplink.__dict__,
+                    "target": "file",
+                    "path": out,
+                    "include_transcripts": True,
+                }
+            ),
         }
     )
     wall = RealClock()
     t_start = wall.monotonic()
     sys_root = Path(args.sys_root) if args.sys_root else _fake_sys(out / ".sys")
-    svc = Service(cfg, clock, SyntheticSource(scene, clock), db_path=out / "scan.sqlite",
-                  spectrum=args.spectrum, encoder=WavEncoder(), inline_stt=True,
-                  stt=FakeStt(), sys_root=sys_root)  # fmt: skip
+    svc = Service(
+        cfg,
+        clock,
+        SyntheticSource(scene, clock),
+        db_path=out / "scan.sqlite",
+        spectrum=args.spectrum,
+        encoder=WavEncoder(),
+        inline_stt=True,
+        stt=FakeStt(),
+        sys_root=sys_root,
+    )
     hours = args.hours if args.hours is not None else args.days * 24
     svc.run(until=clock.now() + hours * 3600 + 60)
     svc.publish_digest()
@@ -150,17 +171,30 @@ def cmd_digest(args) -> int:
     cfg = _config(args.config)
     clock = RealClock()
     store = Store.open(Path(args.db), clock)
-    now = args.now if args.now is not None else (
-        store.db.execute("SELECT MAX(t_end) FROM transmissions").fetchone()[0] or clock.now()
+    now = (
+        args.now
+        if args.now is not None
+        else (store.db.execute("SELECT MAX(t_end) FROM transmissions").fetchone()[0] or clock.now())
     )
     row = store.db.execute("SELECT * FROM health ORDER BY ts DESC LIMIT 1").fetchone()
     health = None
     if row is not None:
-        health = {"mode": row["mode"], "temp_c": row["temp_c"], "dongle": bool(row["dongle_ok"]),
-                  "quota_used_mb": row["quota_used_mb"], "clock_ok": bool(row["clock_ok"])}  # fmt: skip
+        health = {
+            "mode": row["mode"],
+            "temp_c": row["temp_c"],
+            "dongle": bool(row["dongle_ok"]),
+            "quota_used_mb": row["quota_used_mb"],
+            "clock_ok": bool(row["clock_ok"]),
+        }
     plan = BandPlan.load(cfg.bandplan_path, cfg.labels_path)
-    d = build_digest(store, health, float(now), plan=plan, site_id=cfg.site_id,
-                     include_transcripts=args.transcripts)  # fmt: skip
+    d = build_digest(
+        store,
+        health,
+        float(now),
+        plan=plan,
+        site_id=cfg.site_id,
+        include_transcripts=args.transcripts,
+    )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     raw = encode_digest(d)
@@ -208,8 +242,17 @@ def cmd_health(args) -> int:
         return 1
     age = RealClock().now() - row["ts"]
     ok = age <= args.max_age_s and bool(row["dongle_ok"])
-    print(json.dumps({"ok": ok, "age_s": round(age, 1), "mode": row["mode"],
-                      "dongle_ok": bool(row["dongle_ok"]), "temp_c": row["temp_c"]}))  # fmt: skip
+    print(
+        json.dumps(
+            {
+                "ok": ok,
+                "age_s": round(age, 1),
+                "mode": row["mode"],
+                "dongle_ok": bool(row["dongle_ok"]),
+                "temp_c": row["temp_c"],
+            }
+        )
+    )
     return 0 if ok else 1
 
 
@@ -263,8 +306,10 @@ def main(argv: list[str] | None = None) -> int:
     h.set_defaults(fn=cmd_health)
 
     args = p.parse_args(argv)
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(asctime)s %(name)s %(levelname)s %(message)s")  # fmt: skip
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
     if args.cmd == "run" and args.source == "synthetic" and not args.scene:
         p.error("--source synthetic needs --scene")
     if args.cmd == "run" and args.source == "file" and not args.iq:

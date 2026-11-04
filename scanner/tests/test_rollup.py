@@ -15,10 +15,19 @@ A, B = 462_562_500, 146_520_000
 
 def _tx(hz: int, t: float, dur: float = 10.0, cls: str = "unknown", snr: float = 20.0):
     return Transmission(
-        hz=hz, band="b", mode="nfm", t_start=t, t_end=t + dur, dur_ms=int(round(dur * 1000)),
-        peak_snr_db=snr, med_snr_db=snr - 3, floor_db=-50.0, bw_hz=11_000.0, source="survey",
+        hz=hz,
+        band="b",
+        mode="nfm",
+        t_start=t,
+        t_end=t + dur,
+        dur_ms=int(round(dur * 1000)),
+        peak_snr_db=snr,
+        med_snr_db=snr - 3,
+        floor_db=-50.0,
+        bw_hz=11_000.0,
+        source="survey",
         cls=cls,
-    )  # fmt: skip
+    )
 
 
 @pytest.fixture
@@ -38,10 +47,19 @@ def _add(store: Store, tx: Transmission) -> int:
 def _hours(store: Store) -> list[tuple]:
     store.flush()
     return [
-        (r["hz"], r["hour_ts"], round(r["active_s"], 3), r["tx_count"], r["voice_tx"],
-         round(r["voice_s"], 3), r["max_snr_db"], r["first_ts"], r["last_ts"])
+        (
+            r["hz"],
+            r["hour_ts"],
+            round(r["active_s"], 3),
+            r["tx_count"],
+            r["voice_tx"],
+            round(r["voice_s"], 3),
+            r["max_snr_db"],
+            r["first_ts"],
+            r["last_ts"],
+        )
         for r in store.db.execute("SELECT * FROM rollup_hour ORDER BY hz, hour_ts")
-    ]  # fmt: skip
+    ]
 
 
 def test_incremental_and_recompute_agree(store):
@@ -131,7 +149,9 @@ def test_clock_correction_moves_rows_into_the_right_hours(store):
     assert (A, int(T0)) not in [(r[0], r[1]) for r in rows]
     assert (B, int(T0)) in [(r[0], r[1]) for r in rows]
     store.flush()
-    assert store.db.execute("SELECT COUNT(*) FROM transmissions WHERE clock_ok = 0").fetchone()[0] == 0
+    assert (
+        store.db.execute("SELECT COUNT(*) FROM transmissions WHERE clock_ok = 0").fetchone()[0] == 0
+    )
 
 
 def test_profiles_track_hour_of_week(store):
@@ -140,9 +160,7 @@ def test_profiles_track_hour_of_week(store):
         for h in range(24):
             rollup.update_profiles(store, int(T0 + week * 7 * DAY + h * H))
     store.flush()
-    row = store.db.execute(
-        "SELECT * FROM profile_how WHERE hz = ? AND how = 3", (A,)
-    ).fetchone()
+    row = store.db.execute("SELECT * FROM profile_how WHERE hz = ? AND how = 3", (A,)).fetchone()
     assert row["n"] == 3 and row["ema_active_s"] == pytest.approx(120)
     rollup.update_profiles(store, int(T0 + 2 * 7 * DAY + 3 * H))  # repeat is a no-op
     store.flush()

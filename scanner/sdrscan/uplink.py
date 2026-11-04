@@ -136,9 +136,15 @@ class _HttpTarget:
     def put(self, name: str, body: bytes, content_type: str, encoding: str | None = None):
         req = self._request(name, body, content_type, encoding)
         parts = urllib.parse.urlsplit(req.full_url)
-        out = len(body) + REQUEST_LINE_EST + len(parts.path) + len(parts.query) + len(
-            parts.netloc
-        ) + sum(len(k) + len(v) + 4 for k, v in req.header_items()) + 40  # Host, Connection
+        out = (
+            len(body)
+            + REQUEST_LINE_EST
+            + len(parts.path)
+            + len(parts.query)
+            + len(parts.netloc)
+            + sum(len(k) + len(v) + 4 for k, v in req.header_items())
+            + 40
+        )  # Host, Connection
         try:
             with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                 data = resp.read()
@@ -223,8 +229,11 @@ class Ledger:
         return "ok"
 
     def to_dict(self) -> dict:
-        return {"month_bytes": self.month_bytes(), "cap_bytes": self.cfg.cap_bytes,
-                "state": self.state()}  # fmt: skip
+        return {
+            "month_bytes": self.month_bytes(),
+            "cap_bytes": self.cfg.cap_bytes,
+            "state": self.state(),
+        }
 
 
 class DigestPublisher:
@@ -318,8 +327,13 @@ class DigestPublisher:
     def _beat(self, digest: dict, now: float) -> PushResult:
         if self._last_beat is not None and now - self._last_beat < DAY - 1:
             return PushResult([], "capped")
-        beat = {"v": 1, "generated_at": int(now), "beat": True, "uplink": "capped",
-                "health": digest.get("health", {})}  # fmt: skip
+        beat = {
+            "v": 1,
+            "generated_at": int(now),
+            "beat": True,
+            "uplink": "capped",
+            "health": digest.get("health", {}),
+        }
         body = json.dumps(beat, sort_keys=True, separators=(",", ":")).encode()
         if len(body) > BEAT_MAX_BYTES:
             beat["health"] = {k: beat["health"].get(k) for k in ("mode", "dongle", "temp_c")}

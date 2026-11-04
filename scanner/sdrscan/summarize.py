@@ -31,7 +31,7 @@ import statistics
 
 from .bandplan import BandPlan
 from .health import Health
-from .rollup import DAY, H, day_of, hour_of, how_of, query_window
+from .rollup import DAY, H, day_of, hour_of, query_window
 from .store import Store
 
 SCHEMA = 1
@@ -195,7 +195,10 @@ def _bands(store: Store, t0: float, now: float) -> tuple[list[dict], float | Non
         (hour_of(t0), hour_of(now)),
     ).fetchone()[0]
     return (
-        [{"band": r["band"], "occ_pct": r1(r["occ"]), "peaks": int(r["peaks"] or 0)} for r in ranked],
+        [
+            {"band": r["band"], "occ_pct": r1(r["occ"]), "peaks": int(r["peaks"] or 0)}
+            for r in ranked
+        ],
         r1(cov),
     )
 
@@ -213,9 +216,13 @@ def _now(store: Store, now: float, flags: dict[int, str], state: dict | None) ->
             if r["hz"] in flags:
                 continue
             active.append(
-                {"hz": r["hz"], "age_s": max(0, int(now - r["t"])), "snr": r1(r["snr"]),
-                 "cls": r["class"] or "unknown"}
-            )  # fmt: skip
+                {
+                    "hz": r["hz"],
+                    "age_s": max(0, int(now - r["t"])),
+                    "snr": r1(r["snr"]),
+                    "cls": r["class"] or "unknown",
+                }
+            )
     active.sort(key=lambda a: (a.get("age_s", 0), -(a.get("snr") or 0), a["hz"]))
     out = {"active": active[:TOP_N], "count": len(active)}
     if state is not None and state.get("tuner"):
@@ -290,8 +297,15 @@ def _unusual(store: Store, now: float, flags: dict[int, str], base: _Baseline) -
         mean, sd = st
         z = (x - mean) / max(sd, 0.5 * mean, UNUSUAL_FLOOR_S)
         if z > Z_UNUSUAL:
-            out.append({"hz": hz, "hour": h, "active_s": int(round(x)),
-                        "usual_s": int(round(mean)), "z": r1(z)})  # fmt: skip
+            out.append(
+                {
+                    "hz": hz,
+                    "hour": h,
+                    "active_s": int(round(x)),
+                    "usual_s": int(round(mean)),
+                    "z": r1(z),
+                }
+            )
     out.sort(key=lambda u: (-u["z"], u["hz"], u["hour"]))
     return out[:LIST_N]
 
@@ -369,8 +383,13 @@ def _recent(store: Store, now: float, flags: dict[int, str], with_text: bool) ->
     for r in rows:
         if r["hz"] in flags:
             continue
-        item = {"hz": r["hz"], "t": r["t_start"], "dur_s": r1(r["dur_ms"] / 1000),
-                "cls": r["class"] or "unknown", "snr": r1(r["peak_snr_db"])}  # fmt: skip
+        item = {
+            "hz": r["hz"],
+            "t": r["t_start"],
+            "dur_s": r1(r["dur_ms"] / 1000),
+            "cls": r["class"] or "unknown",
+            "snr": r1(r["peak_snr_db"]),
+        }
         if r["clip"] is not None and r["path"]:
             item["clip"] = r["clip"]
         if with_text and r["text"] and (r["confidence"] or 0) >= MIN_CONFIDENCE:
@@ -395,8 +414,14 @@ def _transcripts(store: Store, now: float) -> list[dict]:
         if per.get(r["hz"], 0) >= TRANSCRIPTS_PER_CHANNEL_DAY:
             continue
         per[r["hz"]] = per.get(r["hz"], 0) + 1
-        out.append({"hz": r["hz"], "t": r["created"], "text": _clip_text(r["text"]),
-                    "conf": r1(r["confidence"])})  # fmt: skip
+        out.append(
+            {
+                "hz": r["hz"],
+                "t": r["created"],
+                "text": _clip_text(r["text"]),
+                "conf": r1(r["confidence"]),
+            }
+        )
         if len(out) >= TRANSCRIPTS_N:
             break
     return out

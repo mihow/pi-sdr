@@ -52,20 +52,33 @@ def test_compressed_hour_end_to_end(tmp_path, vclock, sys_root):
     (usb / "idVendor").write_text("0bda\n")
     (usb / "idProduct").write_text("2838\n")
     cfg = Config(
-        data_root=tmp_path / "data", stage_root=tmp_path / "stage",
+        data_root=tmp_path / "data",
+        stage_root=tmp_path / "stage",
         duty=DutyConfig(dwell_block_s=0.1),
         quota=QuotaConfig(clip_quota_bytes=1_000_000, per_channel_share=1.0),
-        uplink=UplinkConfig(target="http_put", secrets_env=tmp_path / "uplink.env",
-                            include_transcripts=True, tls_overhead_bytes=6_000),
-    )  # fmt: skip
+        uplink=UplinkConfig(
+            target="http_put",
+            secrets_env=tmp_path / "uplink.env",
+            include_transcripts=True,
+            tls_overhead_bytes=6_000,
+        ),
+    )
     (tmp_path / "uplink.env").write_text(
         f"SDRSCAN_UPLINK_URL=http://127.0.0.1:{server.port}/site/{{name}}\n"
     )
     scene = Scene.from_yaml(SCENE, clock=vclock)
     source = SyntheticSource(scene, vclock)
-    svc = Service(cfg, vclock, source, spectrum="hybrid", encoder=WavEncoder(),
-                  statvfs=FakeFs(0.5), sys_root=sys_root, inline_stt=True,
-                  stt=FakeStt(["unit two on scene", "copy, en route"]))  # fmt: skip
+    svc = Service(
+        cfg,
+        vclock,
+        source,
+        spectrum="hybrid",
+        encoder=WavEncoder(),
+        statvfs=FakeFs(0.5),
+        sys_root=sys_root,
+        inline_stt=True,
+        stt=FakeStt(["unit two on scene", "copy, en route"]),
+    )
     page_bytes = svc.ledger.month_bytes()  # the one-time dashboard page upload
     svc.run(until=START + H + 60)
     store = svc.store
@@ -86,8 +99,9 @@ def test_compressed_hour_end_to_end(tmp_path, vclock, sys_root):
     assert len(clips) == 4
     transcripts = store.db.execute("SELECT * FROM transcripts").fetchall()
     assert len(transcripts) == 4 and {r["text"] for r in transcripts} == {
-        "unit two on scene", "copy, en route"
-    }  # fmt: skip
+        "unit two on scene",
+        "copy, en route",
+    }
     assert all(t["transcript_id"] is not None for t in by_hz[GMRS] + by_hz[AIR])
 
     # The clip store stayed under its quota by evicting the oldest clips first.
@@ -108,8 +122,10 @@ def test_compressed_hour_end_to_end(tmp_path, vclock, sys_root):
         "SELECT hz, tx_count, voice_tx FROM rollup_day WHERE day_ts = ?", (int(T0),)
     ).fetchall()
     assert {r["hz"]: (r["tx_count"], r["voice_tx"]) for r in day_rows} == {
-        GMRS: (3, 3), AIR: (1, 1), TONE: (1, 0)
-    }  # fmt: skip
+        GMRS: (3, 3),
+        AIR: (1, 1),
+        TONE: (1, 0),
+    }
     day = rollup.query_window(store, "day", vclock.now())
     assert day.channels[GMRS].tx_count == 3
 
@@ -126,8 +142,10 @@ def test_compressed_hour_end_to_end(tmp_path, vclock, sys_root):
     assert d["health"]["dongle"] is True and d["health"]["uplink"]["state"] == "ok"
     pushed = svc.ledger.month_bytes() - page_bytes
     assert 0 < pushed <= HOURLY_BUDGET_BYTES, pushed
-    print(f"\ne2e: digest {len(gz)} B gzipped, push charged {pushed} B "
-          f"(projected {pushed * 24 / 1000:.0f} KB/day), page upload {page_bytes} B")  # fmt: skip
+    print(
+        f"\ne2e: digest {len(gz)} B gzipped, push charged {pushed} B "
+        f"(projected {pushed * 24 / 1000:.0f} KB/day), page upload {page_bytes} B"
+    )
     svc.shutdown()
     server.close()
 
@@ -136,11 +154,19 @@ def test_publisher_injected_and_reused(tmp_path, vclock, sys_root):
     """A service can take a ready publisher (the CLI uses this for simulate)."""
     cfg = Config(data_root=tmp_path / "d", stage_root=tmp_path / "s")
     scene = Scene.from_yaml("emitters: []\n", clock=vclock)
-    svc = Service(cfg, vclock, SyntheticSource(scene, vclock), spectrum="psd",
-                  statvfs=FakeFs(0.5), sys_root=sys_root, publisher=None)  # fmt: skip
+    svc = Service(
+        cfg,
+        vclock,
+        SyntheticSource(scene, vclock),
+        spectrum="psd",
+        statvfs=FakeFs(0.5),
+        sys_root=sys_root,
+        publisher=None,
+    )
     ledger = Ledger(svc.store, cfg.uplink, vclock)
-    svc.publisher = DigestPublisher(FileTarget(tmp_path / "out"), ledger, tmp_path / "ob", vclock,
-                                    cfg.uplink)  # fmt: skip
+    svc.publisher = DigestPublisher(
+        FileTarget(tmp_path / "out"), ledger, tmp_path / "ob", vclock, cfg.uplink
+    )
     svc.publish_digest()
     assert (tmp_path / "out" / "digest.json.gz").exists()
     svc.shutdown()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import gzip
-import json
 import os
 from pathlib import Path
 
@@ -82,8 +81,16 @@ def test_worst_case_500_active_channels_stays_under_4kb(tmp_path, vclock):
             tx = weekgen._tx(plan, hz, END - 3500 + k * 500 + i % 40, 30 + i % 17)
             store.add_tx(tx)
             rollup.on_tx_closed(store, tx)
-        cid = store.add_clip(hz=hz, t_start=END - 600, dur_ms=4000, nbytes=1, codec="opus",
-                             path="p", tier=1, sha256="")  # fmt: skip
+        cid = store.add_clip(
+            hz=hz,
+            t_start=END - 600,
+            dur_ms=4000,
+            nbytes=1,
+            codec="opus",
+            path="p",
+            tier=1,
+            sha256="",
+        )
         store.add_transcript(cid, None, "fake", "x" * 400, 0.95, 0.1, END - 500)
     store.flush()
     d = build_digest(store, weekgen.fake_health(), END, plan=plan, include_transcripts=True)
