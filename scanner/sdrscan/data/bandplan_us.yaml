@@ -1,0 +1,77 @@
+# Generic United States band plan for the RTL-SDR Blog V4 range (about 24 MHz to 1766 MHz).
+# Frequencies are integer Hz. Bands are half-open [lo_hz, hi_hz) and must not overlap.
+# tier A: revisited about every 15 s (voice bands that matter for "what is happening now").
+# tier B: the rest, revisited every few minutes.
+# policy: dwell (voice; may get a dwell), occupancy (count energy only),
+#         decoder (left for a later external decoder job), ignore (never swept).
+# Site-specific channel names go in a local labels file, never in this file.
+
+defaults:
+  mode: unknown
+  raster_hz: 12500
+  bw_hz: 12500
+  gain_db: 32.8
+  threshold_db: 10.0
+  tier: B
+  policy: occupancy
+  deviation_hz: 2500
+
+bands:
+  - {id: cb, name: CB radio, lo_hz: 26_965_000, hi_hz: 27_405_000, mode: am, raster_hz: 10_000, bw_hz: 8_000}
+  - {id: ham_10m, name: Amateur 10 m, lo_hz: 28_000_000, hi_hz: 29_700_000, raster_hz: 5_000, bw_hz: 10_000}
+  - {id: vhf_low, name: VHF low band, lo_hz: 30_000_000, hi_hz: 50_000_000, mode: nfm, raster_hz: 20_000, policy: dwell}
+  - {id: ham_6m, name: Amateur 6 m, lo_hz: 50_000_000, hi_hz: 54_000_000, mode: nfm, raster_hz: 20_000, policy: dwell}
+  - {id: tv_vhf_lo, name: TV VHF 2-6, lo_hz: 54_000_000, hi_hz: 88_000_000, raster_hz: 100_000, bw_hz: 100_000}
+  - {id: fm_bcast, name: FM broadcast, lo_hz: 88_000_000, hi_hz: 108_000_000, mode: wfm, raster_hz: 200_000, raster_origin_hz: 100_000, bw_hz: 180_000, threshold_db: 15.0, gain_db: 8.7}
+  - {id: aero_nav, name: Aviation navigation, lo_hz: 108_000_000, hi_hz: 118_000_000, mode: am, raster_hz: 50_000, bw_hz: 8_000}
+  # 8.33 kHz channels are not on an integer Hz raster; the 25 kHz raster is used for all.
+  - {id: airband, name: Airband, lo_hz: 118_000_000, hi_hz: 137_000_000, mode: am, raster_hz: 25_000, bw_hz: 8_000, gain_db: 40.2, tier: A, policy: dwell}
+  - {id: sat_137, name: Weather satellites 137 MHz, lo_hz: 137_000_000, hi_hz: 138_000_000, raster_hz: 25_000, bw_hz: 40_000}
+  - {id: mil_vhf, name: VHF 138-144, lo_hz: 138_000_000, hi_hz: 144_000_000, mode: nfm, raster_hz: 12_500}
+  - {id: ham_2m_lo, name: Amateur 2 m (low), lo_hz: 144_000_000, hi_hz: 144_380_000, mode: nfm, raster_hz: 5_000, tier: A, policy: dwell}
+  - {id: aprs, name: APRS, lo_hz: 144_380_000, hi_hz: 144_400_000, mode: digital, raster_hz: 10_000, tier: A, policy: decoder}
+  - {id: ham_2m, name: Amateur 2 m, lo_hz: 144_400_000, hi_hz: 148_000_000, mode: nfm, raster_hz: 5_000, tier: A, policy: dwell}
+  - {id: vhf_148, name: VHF 148-150.8, lo_hz: 148_000_000, hi_hz: 150_800_000, mode: nfm, raster_hz: 12_500}
+  - {id: vhf_lmr_1, name: VHF land mobile, lo_hz: 150_800_000, hi_hz: 151_815_000, mode: nfm, raster_hz: 2_500, tier: A, policy: dwell}
+  - {id: murs_1, name: MURS, lo_hz: 151_815_000, hi_hz: 151_945_000, mode: nfm, raster_hz: 10_000, tier: A, policy: dwell}
+  - {id: vhf_lmr_2, name: VHF land mobile, lo_hz: 151_945_000, hi_hz: 154_565_000, mode: nfm, raster_hz: 2_500, tier: A, policy: dwell}
+  - {id: murs_2, name: MURS, lo_hz: 154_565_000, hi_hz: 154_605_000, mode: nfm, raster_hz: 10_000, tier: A, policy: dwell}
+  - {id: vhf_lmr_3, name: VHF land mobile, lo_hz: 154_605_000, hi_hz: 156_000_000, mode: nfm, raster_hz: 2_500, tier: A, policy: dwell}
+  - {id: marine, name: Marine VHF, lo_hz: 156_000_000, hi_hz: 157_450_000, mode: nfm, raster_hz: 25_000, deviation_hz: 5_000, tier: A, policy: dwell}
+  - {id: vhf_lmr_4, name: VHF land mobile, lo_hz: 157_450_000, hi_hz: 160_215_000, mode: nfm, raster_hz: 2_500, tier: A, policy: dwell}
+  - {id: railroad, name: Railroad (AAR), lo_hz: 160_215_000, hi_hz: 161_565_000, mode: nfm, raster_hz: 7_500, tier: A, policy: dwell}
+  - {id: vhf_lmr_5, name: VHF land mobile, lo_hz: 161_565_000, hi_hz: 162_400_000, mode: nfm, raster_hz: 2_500, tier: A, policy: dwell}
+  - {id: noaa_wx, name: NOAA weather radio, lo_hz: 162_400_000, hi_hz: 162_575_000, mode: nfm, raster_hz: 25_000, deviation_hz: 5_000, tier: A, policy: dwell}
+  - {id: vhf_lmr_6, name: VHF land mobile, lo_hz: 162_575_000, hi_hz: 174_000_000, mode: nfm, raster_hz: 2_500, tier: A, policy: dwell}
+  - {id: tv_vhf_hi, name: TV VHF 7-13, lo_hz: 174_000_000, hi_hz: 216_000_000, raster_hz: 100_000, bw_hz: 100_000}
+  - {id: vhf_216, name: VHF 216-220, lo_hz: 216_000_000, hi_hz: 220_000_000, mode: nfm}
+  - {id: ham_125cm, name: Amateur 1.25 m, lo_hz: 220_000_000, hi_hz: 225_000_000, mode: nfm, raster_hz: 5_000, policy: dwell}
+  - {id: mil_air, name: UHF military air, lo_hz: 225_000_000, hi_hz: 400_000_000, mode: am, raster_hz: 25_000, bw_hz: 8_000}
+  - {id: uhf_400, name: UHF 400-420, lo_hz: 400_000_000, hi_hz: 420_000_000, mode: nfm}
+  - {id: ham_70cm_lo, name: Amateur 70 cm, lo_hz: 420_000_000, hi_hz: 433_050_000, mode: nfm, raster_hz: 5_000, tier: A, policy: dwell}
+  - {id: ism_433, name: ISM 433 MHz, lo_hz: 433_050_000, hi_hz: 434_790_000, mode: digital, raster_hz: 10_000, bw_hz: 50_000, policy: decoder}
+  - {id: ham_70cm, name: Amateur 70 cm, lo_hz: 434_790_000, hi_hz: 450_000_000, mode: nfm, raster_hz: 5_000, tier: A, policy: dwell}
+  - {id: uhf_lmr_1, name: UHF land mobile, lo_hz: 450_000_000, hi_hz: 462_537_500, mode: nfm, raster_hz: 6_250, tier: A, policy: dwell}
+  - {id: gmrs_frs_462, name: GMRS/FRS 462, lo_hz: 462_537_500, hi_hz: 462_737_500, mode: nfm, raster_hz: 12_500, tier: A, policy: dwell}
+  - {id: uhf_lmr_2, name: UHF land mobile, lo_hz: 462_737_500, hi_hz: 467_537_500, mode: nfm, raster_hz: 6_250, tier: A, policy: dwell}
+  - {id: gmrs_frs_467, name: GMRS/FRS 467, lo_hz: 467_537_500, hi_hz: 467_737_500, mode: nfm, raster_hz: 12_500, tier: A, policy: dwell}
+  - {id: uhf_lmr_3, name: UHF land mobile, lo_hz: 467_737_500, hi_hz: 470_000_000, mode: nfm, raster_hz: 6_250, tier: A, policy: dwell}
+  - {id: tv_uhf, name: TV UHF, lo_hz: 470_000_000, hi_hz: 698_000_000, raster_hz: 100_000, bw_hz: 100_000}
+  - {id: cell_700, name: Cellular 700, lo_hz: 698_000_000, hi_hz: 806_000_000, raster_hz: 100_000, bw_hz: 100_000}
+  - {id: lmr_800_a, name: 800 MHz land mobile, lo_hz: 806_000_000, hi_hz: 824_000_000, mode: nfm}
+  - {id: cell_850_up, name: Cellular 850 uplink, lo_hz: 824_000_000, hi_hz: 849_000_000, raster_hz: 100_000, bw_hz: 100_000}
+  - {id: lmr_800_gap, name: 849-851 MHz, lo_hz: 849_000_000, hi_hz: 851_000_000}
+  - {id: lmr_800_b, name: 800 MHz land mobile, lo_hz: 851_000_000, hi_hz: 869_000_000, mode: nfm}
+  - {id: cell_850_dn, name: Cellular 850 downlink, lo_hz: 869_000_000, hi_hz: 894_000_000, raster_hz: 100_000, bw_hz: 100_000}
+  - {id: lmr_900, name: 900 MHz land mobile, lo_hz: 894_000_000, hi_hz: 902_000_000, mode: nfm}
+  - {id: ism_915, name: ISM 915 MHz, lo_hz: 902_000_000, hi_hz: 928_000_000, mode: digital, raster_hz: 25_000, bw_hz: 100_000, policy: decoder}
+  - {id: pager_929, name: Pagers 929-932, lo_hz: 928_000_000, hi_hz: 932_000_000, mode: digital, raster_hz: 12_500}
+  - {id: uhf_932, name: 932-960 MHz, lo_hz: 932_000_000, hi_hz: 960_000_000, raster_hz: 25_000, bw_hz: 25_000}
+  - {id: aero_dme, name: Aviation DME, lo_hz: 960_000_000, hi_hz: 1_089_000_000, raster_hz: 1_000_000, bw_hz: 1_000_000}
+  - {id: adsb, name: ADS-B 1090, lo_hz: 1_089_000_000, hi_hz: 1_091_000_000, mode: digital, raster_hz: 1_000_000, bw_hz: 2_000_000, policy: decoder}
+  - {id: aero_l, name: Aviation L band, lo_hz: 1_091_000_000, hi_hz: 1_215_000_000, raster_hz: 1_000_000, bw_hz: 1_000_000}
+  - {id: ham_23cm, name: Amateur 23 cm, lo_hz: 1_215_000_000, hi_hz: 1_300_000_000, raster_hz: 25_000, bw_hz: 25_000}
+  - {id: l_band_misc, name: L band 1300-1525, lo_hz: 1_300_000_000, hi_hz: 1_525_000_000, raster_hz: 100_000, bw_hz: 100_000}
+  - {id: sat_l, name: Satellite L band, lo_hz: 1_525_000_000, hi_hz: 1_559_000_000, raster_hz: 25_000, bw_hz: 25_000}
+  - {id: gnss, name: GNSS, lo_hz: 1_559_000_000, hi_hz: 1_610_000_000, raster_hz: 1_000_000, bw_hz: 2_000_000, policy: ignore}
+  - {id: l_band_hi, name: L band 1610-1766, lo_hz: 1_610_000_000, hi_hz: 1_766_000_000, raster_hz: 100_000, bw_hz: 100_000}
