@@ -237,6 +237,28 @@ class Store:
     def update_clip_tier(self, clip_id: int, tier: int) -> None:
         self._queue("UPDATE clips SET tier = ? WHERE id = ?", (int(tier), int(clip_id)))
 
+    def add_transcript(
+        self,
+        clip_id: int,
+        tx_id: int | None,
+        engine: str,
+        text: str,
+        confidence: float,
+        rtf: float | None,
+        created: float,
+    ) -> int:
+        tid = self._new_id("transcripts")
+        self._queue(
+            "INSERT INTO transcripts (id, clip_id, engine, text, confidence, rtf, created)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (tid, int(clip_id), engine, text, float(confidence), rtf, int(created)),
+        )
+        if tx_id is not None:
+            self._queue(
+                "UPDATE transmissions SET transcript_id = ? WHERE id = ?", (tid, int(tx_id))
+            )
+        return tid
+
     def add_health(self, h: dict) -> None:
         row = tuple(h.get(c) for c in _HEALTH_COLS)
         row = (int(row[0]),) + row[1:]
