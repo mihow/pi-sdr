@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS spectrum_hour (hour_ts INTEGER PRIMARY KEY, bins BLOB
 CREATE TABLE IF NOT EXISTS rollup_day (
   hz INTEGER, day_ts INTEGER, active_s REAL DEFAULT 0, tx_count INTEGER DEFAULT 0,
   voice_tx INTEGER DEFAULT 0, voice_s REAL DEFAULT 0, max_snr_db REAL,
-  PRIMARY KEY (hz, day_ts));
+  active_hours INTEGER DEFAULT 0, PRIMARY KEY (hz, day_ts));
 CREATE TABLE IF NOT EXISTS profile_how (
   hz INTEGER, how INTEGER, ema_active_s REAL, ema_var REAL DEFAULT 0, n INTEGER DEFAULT 0,
   PRIMARY KEY (hz, how));
@@ -145,6 +145,10 @@ class Store:
         self._pending.append((sql, params))
         if self.clock.monotonic() - self._last_flush >= self.batch_s:
             self.flush()
+
+    def defer(self, sql: str, params: tuple) -> None:
+        """Queue a write with the batch (rollups use it, so they commit with their rows)."""
+        self._queue(sql, params)
 
     def _new_id(self, table: str) -> int:
         i = self._next_id[table]
