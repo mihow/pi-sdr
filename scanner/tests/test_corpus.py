@@ -102,6 +102,8 @@ def test_gate(clip, exp):
     assert recs[-1]["class"] == exp["class"], recs
     assert voice_s >= exp.get("min_voice_s", 0.0)
     assert voice_s <= exp.get("max_voice_s", float("inf"))
+    if "ctcss_hz" in exp:
+        assert recs[-1]["ctcss_hz"] == exp["ctcss_hz"], recs[-1]
 
 
 @pytest.mark.corpus

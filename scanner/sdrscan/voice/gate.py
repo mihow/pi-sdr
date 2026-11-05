@@ -9,7 +9,8 @@ passes from about 350 Hz). Repeaters send a CTCSS tone (67 to 254.1 Hz) or a DCS
 (134.4 bit/s) under the speech, and that tone often carries most of the demodulated energy.
 Without the filter, the tone test below counts the tone and labels speech as data. A frame
 with only sub-audible content is then below ``SILENCE_RMS``, so a squelch tail or kerchunk
-is not voice.
+is not voice. A ``ToneMeter`` reads the unfiltered input, and ``summary`` reports the
+tone it found as ``ctcss_hz``.
 
 A frame is voice when webrtcvad (mode 2) votes speech AND the frame is pitched
 (autocorrelation above 0.2 at 80 to 400 Hz) or not flat (spectral flatness below 0.35),
@@ -32,6 +33,7 @@ import numpy as np
 from scipy.signal import cheby2, sosfilt, sosfilt_zi
 
 from .. import AUDIO_RATE
+from .ctcss import ToneMeter
 
 PITCH_MIN = 0.2
 FLATNESS_MAX = 0.35
@@ -110,6 +112,7 @@ class VoiceGate:
         self._sos = cheby2(
             10, SUBAUDIBLE_STOP_DB, SUBAUDIBLE_STOP_HZ, btype="highpass", fs=rate, output="sos"
         )
+        self._tone = ToneMeter(rate)
         self.reset()
 
     def reset(self) -> None:
@@ -121,6 +124,7 @@ class VoiceGate:
         self._flat_sum = 0.0
         self._pitch_hits = 0
         self._state = VoiceState.PENDING
+        self._tone.reset()
         self._vad = None
         if self._vad_mod is not None:
             self._vad = self._vad_mod.create()
@@ -128,6 +132,7 @@ class VoiceGate:
             self._vad_mod.set_mode(self._vad, 2)
 
     def push(self, pcm: np.ndarray) -> VoiceState:
+        self._tone.push(pcm)  # the CTCSS tone, measured before the high-pass removes it
         data = np.concatenate((self._buf, self._highpass(pcm)))
         n = len(data) // self.frame
         for i in range(n):
@@ -157,6 +162,8 @@ class VoiceGate:
             "flatness": round(self._flat_sum / measured, 3) if measured else None,
             "pitch_hits": self._pitch_hits,
             "state": self._state.value,
+            "silent_share": round(self._counts["silent"] / frames, 3) if frames else None,
+            "ctcss_hz": self._tone.tone_hz(),
         }
 
     # -- internals ---------------------------------------------------------------------
