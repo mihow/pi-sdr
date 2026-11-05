@@ -308,12 +308,53 @@ class SttEngine(typing.Protocol):
     def transcribe(self, pcm16k: numpy.ndarray) -> Transcript   # text, confidence, engine, rtf
 ```
 
-The MVP ships `NullStt` (no text) and `FakeStt` (tests). The adapter for a real engine is a
-subprocess wrapper around `whisper.cpp` (`whisper-cli`) with `tiny.en`, 2 threads, a smaller
-audio context for short clips, and a 300 to 3000 Hz bandpass before inference. It is
-optional and off by default. Moonshine Tiny and sherpa-onnx are other candidates for the
-same interface. Results below a confidence threshold, or matching a hallucination blocklist
-("thank you", "thanks for watching"), are stored but never shown as fact.
+`NullStt` gives no text and `FakeStt` scripted text (tests). The real engines sit behind the
+same protocol and are each optional: a missing Python package or model file makes an engine
+unavailable, never a crash, and models are local files that are never downloaded at run time.
+
+| `stt.engine` | Engine | Model |
+|---|---|---|
+| `whisper_cpp` | `whisper-cli` subprocess, one per clip | ggml `base.en` q5_1 (60 MB) |
+| `sherpa_parakeet` | sherpa-onnx offline transducer, in process | Parakeet TDT 0.6B v2 int8 (661 MB) |
+| `sherpa_moonshine` | sherpa-onnx, in process | Moonshine tiny int8 (124 MB) |
+| `faster_whisper` | CTranslate2 int8, in process | Whisper `base.en` (148 MB) |
+
+The rig runs `whisper_cpp`; the others are for build hosts and later use. Every engine reads
+the clip peak-normalised. whisper.cpp and faster-whisper read it band-passed to 300 to
+3000 Hz first (base.en WER 0.28 without, 0.25 with), and Parakeet reads it without (0.17
+without, 0.19 with). whisper.cpp sizes its audio context (`-ac`) to the clip, but never
+below `stt.whisper_audio_ctx` frames (1024, about 20 s). A context sized tightly to a short
+clip made base.en repeat itself (WER 0.41); the full 30 s context gave 0.25 at 1.7 times
+the time, and the 1024 floor 0.24. whisper-cli JSON can hold a character split across
+tokens, so it is decoded with replacement, not strictly.
+An in-process engine is built once, on the STT worker thread at nice 19, and stays loaded
+while the governor pauses STT. Results below `stt.min_confidence`, matching a hallucination
+blocklist ("thank you", "thanks for watching"), or made only of sound tags ("[applause]",
+"(music)", "*beep*") are stored but never shown as fact.
+
+**Engine choice: the corpus test decides.** `sdrscan stt-bench --reference reference.json`
+(`voice/stt_bench.py`) runs every available engine, each in a fresh process, over a private
+reference set: speech segments with reference text and noise-only segments, all 16 kHz
+audio cut by the scanner's own detect, demod and gate stages. On the current host and at
+`stt.threads` it measures the WER (built-in normaliser: lower case, no punctuation or sound
+tags, contractions expanded, spoken numbers as digits), the share of noise segments whose
+transcript would be shown as fact, the real-time factor without model loading, the peak
+RSS of the process, and the model size on disk. The rule is deterministic: an engine is
+eligible when it ran and its RTF is at most `stt.max_rtf` (0.5), its peak RSS at most
+`stt.max_rss_mb` (1200, for a 4 GB Pi 5), its model at most `stt.max_model_mb` (800, for a
+small card) and its shown-noise share at most `stt.max_noise_shown_frac` (0.15; whisper.cpp's
+`-sns` failed this at 5 of 18). The
+eligible engine with the lowest WER, rounded to 3 decimals, wins; ties go to the smaller
+peak RSS, then the smaller model. No eligible engine means no STT (`stt_no_engine_fits`).
+
+The bench writes `<data_root>/stt-choice.json` (`sdrscan.stt_choice/1`): the engine and its
+settings, every engine's numbers and exclusion reasons, the limits, the host, the thread
+count and the sha256 of the reference set. `stt.engine: auto` reads it once at start. A
+missing or invalid choice (other CPU architecture, unknown engine, missing model) falls
+back to the first available engine in `stt.fallback` and adds `stt_auto_fallback` to the
+health flags; with nothing available it adds `stt_unavailable`. An explicit engine name
+skips the choice. The reference set holds real speech, so it never enters the repository;
+the committed tests use a synthetic set and recorded numbers.
 
 Call signs (`callsign.py`) are read from each stored transcript: US amateur calls (1x1 to
 2x3, prefixes K, N, W and AA to AL), GMRS calls (4 letters and 3 digits, or the older 3

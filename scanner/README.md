@@ -20,9 +20,9 @@ Plan: [`docs/superpowers/plans/2026-11-03-sdr-scanner.md`](../docs/superpowers/p
    the tone out. A short carrier with no voice or data (5 s at most) is logged as a key-up.
    Every transmission keeps its tone, which names the repeater or user group. A voice
    transmission of at least 1.5 s keeps an 8 kbit/s Opus clip.
-4. Speech-to-text (whisper.cpp `whisper-cli` with the `base.en` q5_1 model, built into the
-   image) turns kept clips into short transcripts at nice 19, and pauses when the rig runs
-   hot. Transcripts show on the rig's live page. They go into the off-site digest only with
+4. Speech-to-text turns kept clips into short transcripts at nice 19, and pauses when the
+   rig runs hot. The engine is whichever one `sdrscan stt-bench` measured best on the rig
+   (see [Speech-to-text](#speech-to-text)). Transcripts show on the rig's live page. They go into the off-site digest only with
    `uplink.include_transcripts: true`, because the off-site page is publicly readable.
    Call signs are read from each transcript (amateur, GMRS, and aircraft registrations on
    airband; written or spelled with phonetics) and follow the same setting.
@@ -81,7 +81,7 @@ sdrscan corpus cut --src big.cf32 --offset 0 --seconds 2 --out cap.cu8   # or sl
 sdrscan detect --iq cap.cu8 --out det.jsonl          # prints the channels heard
 sdrscan demod --iq cap.cu8 --freq 443.15M --out ch.wav
 sdrscan gate --wav ch.wav --out seg.jsonl            # prints the class: voice, data or unknown
-sdrscan stt --wav ch.wav --binary whisper-cli --model ggml-base.en-q5_1.bin --out tr.json
+sdrscan stt --wav ch.wav --engine whisper_cpp --binary whisper-cli --model ggml-base.en-q5_1.bin --out tr.json
 sdrscan digest --events det.jsonl --out www && sdrscan dashboard --digest www/digest.json.gz --out www
 ```
 
@@ -100,6 +100,64 @@ Without the variable these tests skip. A missing file or changed bytes skips tha
 says which. To add a clip, run `sdrscan corpus cut` on it (it prints the source sha256),
 run the stages, and write assertions that are robust: presence, absence, class and
 frequency within a tolerance, not exact counts.
+
+## Speech-to-text
+
+The rig runs whisper.cpp (`whisper-cli` with the `base.en` q5_1 model, 60 MB, built into the
+image). Three more engines sit behind the same interface for build hosts and later use.
+Each one is optional: an engine whose Python package or model is missing is reported
+unavailable, not an error.
+
+| `stt.engine` | Runs | Model |
+|---|---|---|
+| `whisper_cpp` | `whisper-cli`, one process per clip | ggml `base.en` q5_1, 60 MB |
+| `sherpa_parakeet` | sherpa-onnx, in the scanner process | Parakeet TDT 0.6B v2 int8, 661 MB |
+| `faster_whisper` | CTranslate2 int8, in the scanner process | Whisper `base.en`, 148 MB |
+| `sherpa_moonshine` | sherpa-onnx, in the scanner process | Moonshine tiny int8, 124 MB |
+
+`sdrscan stt-bench` measures every available engine on the current host over a private
+reference set and writes a choice file; `stt.engine: auto` runs the engine in that file. The
+rule: among engines with a real-time factor of at most `stt.max_rtf` (0.5) at
+`stt.threads`, a peak RSS of at most `stt.max_rss_mb` (1200 MB), a model of at most
+`stt.max_model_mb` (800 MB), and at most `stt.max_noise_shown_frac` (15%) of noise clips
+shown as speech, the lowest word error rate wins. An equal WER (3 decimals) goes to the
+smaller RSS. Without a valid choice file, `auto` runs the first available engine in
+`stt.fallback`, and health shows `stt_auto_fallback`.
+
+```bash
+sdrscan stt-bench --config local.yaml --reference /path/to/stt-reference/reference.json \
+  --engines whisper_cpp,whisper_cpp:audio_ctx=768,faster_whisper:model=/models/small.en \
+  --threads 2 --out stt-choice.json
+```
+
+The bench prints one line per engine: WER, RTF, peak RSS, model size, noise clips shown, and
+the reason an engine was left out. `--details FILE` keeps each engine's per-segment text.
+The reference set is a directory of 16 kHz mono WAV segments with a `reference.json`
+(`sdrscan.stt_reference/1`: id, file, sha256, kind `speech` or `noise`, reference text). It
+holds real people's speech, so it and the details file stay out of every repository.
+
+Measured on the x86 build host at 2 threads on 2 pinned cores (2026-11-05), over a reference
+set of 26 speech segments (radio speech from ham repeaters and NOAA weather) and 18 noise
+segments. RTF is relative only, because the Pi 5 is slower; the speech-to-text queue is
+paced by RTF, not dropped, so a slow engine delays transcripts.
+
+| Engine | WER | RTF | Peak RSS MB | Model MB | Noise shown |
+|---|---|---|---|---|---|
+| whisper.cpp base.en, `-ac` floor 1024 (rig default) | 0.237 | 0.24 | 335 | 60 | 1/18 |
+| whisper.cpp base.en, `-ac` floor 768 | 0.245 | 0.19 | 311 | 60 | 1/18 |
+| whisper.cpp base.en, full context | 0.247 | 0.41 | 397 | 60 | 0/18 |
+| whisper.cpp base.en, `-ac` sized to the clip (before) | 0.409 | 0.14 | 307 | 60 | 1/18 |
+| whisper.cpp base.en, floor 768 and `-sns` | 0.225 | 0.19 | 311 | 60 | 5/18 (excluded) |
+| whisper.cpp small.en | 0.150 | 1.29 (excluded) | 708 | 190 | 0/18 |
+| Parakeet TDT 0.6B v2 int8 (chosen) | 0.167 | 0.08 | 1047 | 661 | 0/18 |
+| faster-whisper base.en | 0.215 | 0.10 | 506 | 148 | 0/18 |
+| faster-whisper small.en | 0.114 | 0.30 | 1254 (excluded) | 486 | 0/18 |
+| faster-whisper tiny.en | 0.274 | 0.06 | 328 | 78 | 0/18 |
+| Moonshine tiny int8 | 0.385 | 0.02 | 368 | 124 | 0/18 |
+
+Among the whisper.cpp settings alone, the rule picks the `-ac` floor of 1024, which is the
+rig default. The WER differences between floors of 768 and 1024 and the full context are
+smaller than the set's uncertainty (about ±0.05).
 
 ## Data budget
 
@@ -168,10 +226,11 @@ These need the real rig:
    (`sdrscan bench --json` prints these).
 4. Gain per band, and the 10 dB floor threshold on real 8-bit captures.
 5. Voice gate thresholds on real radio audio; they come from v1 and are untuned.
-6. Speech-to-text real-time factor at 2 threads, and SoC temperature on a hot afternoon.
+6. whisper.cpp real-time factor at 2 threads on the Pi (the bench numbers above are x86;
+   a whisper.cpp-only `stt-bench` on the rig needs only the reference set), and SoC
+   temperature on a hot afternoon.
 7. Ogg Opus clip playback in iOS Safari.
-8. Speech-to-text speed and accuracy on real radio audio. Under qemu on the build host,
-   `whisper-cli` transcribed the 11 s `jfk.wav` sample correctly in about 2 minutes; the Pi
-   is expected to be 20 to 40 times faster than qemu.
+8. Speech-to-text accuracy on AM airband speech and on call signs; the reference set has
+   neither yet.
 9. CTCSS detection and key-up classification on real repeaters (one corpus clip reads
    107.2 Hz), and call-sign accuracy of `base.en` on real radio speech.
