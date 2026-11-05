@@ -41,6 +41,10 @@ def _variants(tmp_path, vclock) -> dict[str, dict]:
         n["first_ts"] += shift
     for u in week["unusual"]:
         u["hour"] += shift
+    for w in week["windows"].values():
+        for c in w.get("calls", []):
+            c["first_ts"] += shift
+            c["last_ts"] += shift
     week["recent"][0]["text"] = (
         "Engine two is clear of the north gate, returning to the station now"
     )
@@ -239,6 +243,38 @@ def test_theme_toggle_and_tabs(site, browsers):
         assert text in page.text_content("#busy-h")
     page.click("#tab-week")
     assert page.locator("#busy li").count() >= 3
+    page.close()
+
+
+def test_call_signs_key_ups_and_stage_activity_show(site, browsers):
+    engine, browser = browsers[0]
+    page = browser.new_page(viewport={"width": 360, "height": 800})
+    page.goto(f"{site}/week/index.html")
+    page.wait_for_selector("#calls li")
+    calls = page.text_content("#calls")
+    assert "K7ABC" in calls and "aircraft" in calls and "146.52" in calls
+    busy = page.text_content("#busy")
+    assert "key-ups" in busy and "tone 100.0 Hz" in busy and "WRAB123" in busy
+    pipe = page.text_content("#pipe")
+    for label in (
+        "Survey hops",
+        "Peaks detected",
+        "Tracks opened",
+        "Dwell time",
+        "Key-ups",
+        "Clips kept",
+        "evicted",
+        "Transcripts",
+        "Call signs found",
+        "Data pushed",
+    ):
+        assert label in pipe, label
+    assert "key-up, tone 100.0 Hz" in page.text_content("#recent")
+    page.click("#tab-now")
+    assert "in the last hour" in page.text_content("#pipe-h")
+    page.goto(f"{site}/empty/index.html")
+    page.wait_for_selector("#calls li")
+    assert "stay on the rig" in page.text_content("#calls")
     page.close()
 
 

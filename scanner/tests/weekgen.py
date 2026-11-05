@@ -10,7 +10,7 @@ It writes transmissions, clips, transcripts and band rows with known patterns:
 - CARRIER is flagged always-on and SPUR is a spur; both have large raw activity, so they
   would top the busiest list if the summarizer did not exclude them.
 - REPEATER (a 2 m repeater output, CTCSS 100.0 Hz) carries one short voice exchange and
-  four key-ups an hour from 07:00 to 21:59 UTC; one key-up an hour has no tone.
+  four key-ups an hour from 07:00 to 23:59 UTC; one key-up an hour has no tone.
 - Transcripts carry call signs: K7ABC and W7XYZ on HAM (all week at noon, more on the last
   day), KD7ABC on REPEATER, WRAB123 on BUSY and N123AB on AIR.
 - Every hour has stage counters (survey hops, peaks, tracks opened, dwell seconds) and an
@@ -85,7 +85,7 @@ def week_events(plan: BandPlan) -> list[Transmission]:
             if not (d == 6 and h >= 20):
                 for k in range(6):
                     out.append(_tx(plan, QUIET, base + 30 + k * 580, 40, cls="unknown"))
-            if 7 <= h <= 21:
+            if 7 <= h <= 23:
                 out.append(_tx(plan, REPEATER, base + 1500, 12, snr=26.0, tone=TONE))
                 for k in range(4):
                     tone = None if k == 3 else TONE

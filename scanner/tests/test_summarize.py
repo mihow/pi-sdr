@@ -194,12 +194,13 @@ def test_key_ups_and_tones_per_channel(week):
     d = _digest(week, include_transcripts=True)
     rows = {c["hz"]: c for c in d["windows"]["day"]["top"]}
     rep = rows[REPEATER]
-    assert rep["keyup"] == 15 * 4 and rep["voice"] == 15 and rep["tx"] == 15 * 5
+    assert rep["keyup"] == 17 * 4 and rep["voice"] == 17 and rep["tx"] == 17 * 5
     assert rep["tone"] == TONE
     assert "keyup" not in rows[BUSY] and "tone" not in rows[BUSY]
-    assert d["windows"]["week"]["keyups"] == 7 * 15 * 4
+    assert d["windows"]["week"]["keyups"] == 7 * 17 * 4
     keyups = [r for r in d["recent"] if r["cls"] == "keyup"]
-    assert all(r["hz"] == REPEATER for r in keyups)
+    assert keyups and all(r["hz"] == REPEATER for r in keyups)
+    assert {r.get("tone") for r in keyups} == {TONE, None}  # one key-up an hour has no tone
 
 
 def test_pipeline_counts_every_stage(week):
@@ -210,7 +211,7 @@ def test_pipeline_counts_every_stage(week):
     assert set(day) == keys
     # The day window is the last 24 hourly rows, and the current hour is empty here.
     assert day["survey_hops"] >= 23 * 22_000 and wk["survey_hops"] > 6 * day["survey_hops"]
-    assert day["keyups"] == 60 and day["evicted"] == 2 and day["clips"] == day["transcripts"]
+    assert day["keyups"] == 68 and day["evicted"] == 2 and day["clips"] == day["transcripts"]
     assert day["callsigns"] >= len(d["windows"]["day"]["calls"])
     assert day["push_kb"] == round(23 * 7.4)
     assert d["windows"]["all"]["pipeline"]["survey_hops"] == wk["survey_hops"]

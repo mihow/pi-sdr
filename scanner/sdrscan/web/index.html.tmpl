@@ -49,10 +49,16 @@ ol,ul.rows{list-style:none;margin:0;padding:0}
 .tx p{margin:4px 0 0;overflow-wrap:anywhere}
 .tx .row{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
 .tx .row .fq{font-size:1.05rem}
+.tx .row .nm{white-space:normal}
 details summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:650}
 .how{display:grid;grid-template-columns:2.2em repeat(24,minmax(0,1fr));gap:2px;font-size:.72rem;color:var(--mu);align-items:center}
 .how i{height:12px;border-radius:2px;background:rgba(var(--cell),.08)}
 .empty{color:var(--mu);margin:4px 0}
+.cs{grid-column:1/-1;color:var(--mu);font-size:.85rem;overflow-wrap:anywhere}
+.cs b{color:var(--ink);font-weight:600}
+.kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;margin:0}
+.kv div{min-width:0}.kv dt{color:var(--mu);font-size:.82rem}.kv dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+@media (min-width:720px){.kv{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .prose{font-size:.95rem;margin:0}
 audio{width:100%;margin-top:6px}
 @media (prefers-reduced-motion:no-preference){.tabs button{transition:background .15s}}
@@ -65,10 +71,12 @@ audio{width:100%;margin-top:6px}
 <div class="tabs" role="tablist" id="tabs"></div>
 <div class="grid">
 <section><h2 id="busy-h">Busiest channels</h2><ol id="busy"></ol><p class="note" id="busy-note"></p></section>
+<section><h2>Call signs</h2><ul class="rows" id="calls"></ul><p class="note" id="calls-note"></p></section>
 <section><h2>New and unusual</h2><ul class="rows" id="news"></ul><h2 style="margin-top:14px">Quieter than usual</h2><ul class="rows" id="quiet"></ul></section>
 <section><h2>Bands by occupancy</h2><ul class="rows" id="bands"></ul></section>
 <section id="prose-s" hidden><h2>Summary</h2><p class="prose" id="prose"></p><p class="note">Written by an on-device language model from the figures on this page.</p></section>
 <section class="wide"><h2>Recent transmissions</h2><ul class="rows" id="recent"></ul></section>
+<section class="wide"><h2 id="pipe-h">What the rig did</h2><dl class="kv" id="pipe"></dl></section>
 <section class="wide"><h2>Typical week</h2><div class="how" id="how"></div><p class="note" id="how-note"></p></section>
 <section class="wide"><details><summary id="always-h">Always on and spurs</summary><ul class="rows" id="always"></ul></details></section>
 </div>
@@ -86,6 +94,10 @@ function ago(t){var s=Date.now()/1000-t;if(s<90)return "just now";if(s<5400)retu
 function hm(t){return new Date(t*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}
 function band(c){var b=(D.band_names||{})[c.band];return b||c.band||""}
 function name(c){var l=(D.labels||{})[c.hz];return l?l+" · "+band(c):band(c)}
+function n0(x){return Math.round(x||0).toLocaleString()}
+function plural(n,w){return n0(n)+" "+w+(Math.round(n)===1?"":"s")}
+function extra(c){var p=[];if(c.keyup)p.push(plural(c.keyup,"key-up"));if(c.tone)p.push("tone "+c.tone.toFixed(1)+" Hz");if(!p.length&&!(c.calls&&c.calls.length))return null;var d=el("div","cs",p.join(" · "));if(c.calls&&c.calls.length){if(p.length)d.appendChild(document.createTextNode(" · "));d.appendChild(el("b",null,c.calls.join(", ")))}return d}
+var KIND={ham:"amateur",gmrs:"GMRS",aviation:"aircraft"};
 function freq(c){var f=el("div","fq",mhz(c.hz));f.appendChild(el("small",null,"MHz"));return f}
 function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
 function theme(m){var r=document.documentElement;if(m==="auto")r.removeAttribute("data-theme");else r.setAttribute("data-theme",m);$("theme").textContent=m[0].toUpperCase()+m.slice(1);store("sdrscan-theme",m)}
@@ -114,13 +126,20 @@ function render(){if(!D)return;health();$("site").textContent=D.site&&D.site!=="
 W.forEach(function(w){$("tab-"+w[0]).setAttribute("aria-selected",String(w[0]===win))});
 var lab={now:"Heard in the last 5 minutes",hour:"Busiest in the last hour",day:"Busiest in the last 24 hours",week:"Busiest this week",all:"Busiest of all time"};$("busy-h").textContent=lab[win];
 if(win==="now"){fill("busy",D.now.active,function(c){return chRow(c,0,ago(D.generated_at-(c.age_s||0)),c.snr!=null?c.snr+" dB":"")},"Nothing heard in the 5 minutes before this summary.");$("busy-note").textContent="As of "+hm(D.generated_at)+"."}
-else{var w=D.windows[win],max=w.top.length?w.top[0].active_s:0;fill("busy",w.top,function(c){return chRow(c,max,dur(c.active_s),c.tx+" tx"+(c.voice?", "+c.voice+" voice":""))},"No activity in this window.");
+else{var w=D.windows[win],max=w.top.length?w.top[0].active_s:0;fill("busy",w.top,function(c){var li=chRow(c,max,dur(c.active_s),c.tx+" tx"+(c.voice?", "+c.voice+" voice":"")),x=extra(c);if(x)li.insertBefore(x,li.children[2]||null);return li},"No activity in this window.");
 $("busy-note").textContent=w.channels+" channels active"+(w.coverage_pct!=null?", "+Math.round(w.coverage_pct)+"% of planned sweeps done":"")+(w.cell_s?". Each cell is "+dur(w.cell_s)+".":".")}
+var cw=D.windows[win==="now"?"hour":win],cl=win==="now"?D.now.calls:cw.calls;
+if(cl===undefined){fill("calls",[],null,"Transcripts and call signs stay on the rig; set uplink.include_transcripts to publish them.");$("calls-note").textContent=""}
+else if(win==="now"){fill("calls",cl,function(c){var li=el("li","ch st");li.appendChild(el("div","fq",c));return li},"No call signs in the 5 minutes before this summary.");$("calls-note").textContent="Heard in the last 5 minutes."}
+else{fill("calls",cl,function(c){var li=el("li","ch"),a=el("div"),f=el("div","fq",c.call);f.appendChild(el("span","tag",KIND[c.kind]||c.kind));a.appendChild(f);li.appendChild(a);var v=el("div","v",c.n+"×");v.appendChild(el("small",null,ago(c.last_ts)));li.appendChild(v);li.appendChild(el("div","cs","on "+c.hz.map(mhz).join(", ")+" MHz · first "+ago(c.first_ts)));return li},"No call signs heard in this window.");$("calls-note").textContent=cw.calls_n>cl.length?cw.calls_n+" call signs in all; the most heard are shown.":"Read from transcripts by speech-to-text; spelled calls can be wrong."}
+var pw=win==="now"?"hour":win,P=D.windows[pw].pipeline||{},pl=$("pipe"),hh=D.health||{};$("pipe-h").textContent="What the rig did"+(win==="now"?" in the last hour":"");pl.textContent="";
+function kv(l,v){var d=el("div");d.appendChild(el("dt",null,l));d.appendChild(el("dd",null,v));pl.appendChild(d)}
+var cov=D.windows[pw].coverage_pct;kv("Survey hops",n0(P.survey_hops)+(cov!=null?" ("+Math.round(cov)+"% of plan)":""));kv("Peaks detected",n0(P.peaks));kv("Tracks opened",n0(P.opened));kv("Dwell time",dur(P.dwell_s||0));kv("Voice transmissions",n0(P.voice));kv("Key-ups",n0(P.keyups));kv("Clips kept",n0(P.clips)+(P.evicted?", "+n0(P.evicted)+" evicted":""));kv("Transcripts",n0(P.transcripts));kv("Call signs found",n0(P.callsigns));kv("Data pushed",n0(P.push_kb)+" KB"+(hh.uplink?", "+(hh.uplink.month_kb/1000).toFixed(1)+" MB this month":""));
 var news=[];(D.new||[]).forEach(function(n){news.push([n,"New","first heard "+ago(n.first_ts)+", "+n.tx+" tx"])});(D.unusual||[]).forEach(function(u){news.push([u,"Busy",dur(u.active_s)+" at "+hm(u.hour)+", usually "+dur(u.usual_s)])});
 fill("news",news,function(x){var li=chRow(x[0],0,"",x[2]);li.className="ch st";li.querySelector(".fq").appendChild(el("span","tag",x[1]));return li},"Nothing new or unusual in the last 24 hours.");
 fill("quiet",D.quiet,function(q){var li=chRow(q,0,"",q.silent_h+" h silent, usually busy then");li.className="ch st";return li},"Every regular channel is behaving normally.");
 var bw=win==="now"?"hour":win;fill("bands",D.windows[bw].bands,function(b){var li=el("li","ch"),a=el("div");a.appendChild(el("div",null,(D.band_names||{})[b.band]||b.band));li.appendChild(a);li.appendChild(el("div","v",b.occ_pct+"%"));var br=el("div","bar"),i=el("i");i.style.width=Math.min(100,b.occ_pct)+"%";br.appendChild(i);li.appendChild(br);return li},"No band data yet.");
-fill("recent",D.recent,function(t){var li=el("li","tx"),r=el("div","row");r.appendChild(freq(t));r.appendChild(el("span","nm",hm(t.t)+", "+dur(t.dur_s)+", "+t.cls+" · "+band(t)));li.appendChild(r);if(t.text){var p=el("p",null,"“"+t.text+"”");p.appendChild(el("span","tag",Math.round(t.conf*100)+"% sure"));li.appendChild(p)}
+fill("recent",D.recent,function(t){var li=el("li","tx"),r=el("div","row");r.appendChild(freq(t));r.appendChild(el("span","nm",hm(t.t)+", "+dur(t.dur_s)+", "+(t.cls==="keyup"?"key-up":t.cls)+(t.tone?", tone "+t.tone.toFixed(1)+" Hz":"")+" · "+band(t)));li.appendChild(r);if(t.text){var p=el("p",null,"“"+t.text+"”");p.appendChild(el("span","tag",Math.round(t.conf*100)+"% sure"));li.appendChild(p)}
 if(live&&t.clip){var b=el("button",null,"Play clip");b.type="button";b.onclick=function(){var a=el("audio");a.controls=true;a.src="clip/"+t.clip+".opus";li.replaceChild(a,b);a.play().catch(function(){})};li.appendChild(b)}return li},"No transmissions in the last 24 hours.");
 var how=$("how");how.textContent="";var off=-Math.round(new Date().getTimezoneOffset()/60),days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],s=D.how||"";
 if(s.replace(/0/g,"")){for(var d=0;d<7;d++){how.appendChild(el("span",null,days[d]));for(var h=0;h<24;h++){var u=((d*24+h-off)%168+168)%168,n=+s[u],c=el("i");if(n)c.style.background="rgba(var(--cell),"+(0.15+n*0.09).toFixed(2)+")";how.appendChild(c)}}$("how-note").textContent="Activity by hour of the week in your time zone, 00:00 to 23:00. Stronger colour means busier."}else $("how-note").textContent="Builds up after the first week.";
