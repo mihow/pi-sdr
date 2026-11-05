@@ -26,7 +26,10 @@ for d in "$SYSFS_USB"/*; do
   fi
 done
 if [ -z "$node" ]; then
-  echo "sdrscan-run: no USB device ${VENDOR}:${PRODUCT} found" >&2
+  # Wait before exiting: systemd restarts the unit 15 s after every exit, and without this
+  # pause an unplugged dongle would add a journal line every 15 s on a small card.
+  echo "sdrscan-run: no USB device ${VENDOR}:${PRODUCT} found; retrying in ${SDRSCAN_NO_DONGLE_WAIT_S:-60} s" >&2
+  sleep "${SDRSCAN_NO_DONGLE_WAIT_S:-60}"
   exit "$EXIT_NO_DONGLE"
 fi
 if [ "${SDRSCAN_DEV_STAT:-1}" = "1" ] && [ ! -c "$node" ]; then

@@ -129,6 +129,8 @@ fi
 
 step "4. Service unit"
 run install -D -m 0755 "$HERE/sdrscan-run" "${SDRSCAN_LIB:-/usr/local/lib/sdrscan}/sdrscan-run"
+# The uninstaller lives next to the wrapper, so it survives a cleanup of the kit directory.
+run install -D -m 0755 "$HERE/uninstall.sh" "${SDRSCAN_LIB:-/usr/local/lib/sdrscan}/uninstall.sh"
 run install -m 0644 "$HERE/sdrscan.service" "$UNIT_DIR/sdrscan.service"
 run systemctl daemon-reload
 run systemctl enable sdrscan.service

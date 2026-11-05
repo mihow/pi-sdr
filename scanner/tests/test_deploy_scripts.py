@@ -141,6 +141,7 @@ def _run_wrapper(tmp_path: Path, devices):
         "SDRSCAN_DOCKER": str(docker),
         "SDRSCAN_USB_GID": "46",
         "SDRSCAN_DEV_STAT": "0",  # skip the device-node check, the fake tree has no /dev
+        "SDRSCAN_NO_DONGLE_WAIT_S": "0",
         "ARGS_OUT": str(tmp_path / "args"),
     }
     r = subprocess.run(
@@ -159,6 +160,13 @@ def test_run_wrapper_passes_only_the_dongle_node(tmp_path):
     assert not any("001/002" in a for a in args), "the relay board must stay out"
     assert not any(a.startswith("/dev/bus/usb:") for a in args)
     assert "--privileged" not in args
+
+
+def test_run_wrapper_waits_before_exiting_without_a_dongle():
+    # systemd restarts the unit 15 s after each exit, forever; without this wait a missing
+    # dongle would write a journal line every 15 s onto a small card.
+    wrapper = (DEPLOY / "sdrscan-run").read_text()
+    assert 'SDRSCAN_NO_DONGLE_WAIT_S:-60' in wrapper
 
 
 def test_run_wrapper_exits_71_without_a_dongle(tmp_path):
