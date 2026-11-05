@@ -265,9 +265,20 @@ def model_mb(engine: SttEngine | None, cfg: SttConfig, name: str) -> float:
 
 
 def _peak_rss_mb() -> float:
-    kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    kb += resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-    return kb / 1024
+    """This process's peak RSS plus its children's (whisper-cli), in MB.
+
+    ``VmHWM`` is used for this process because ``ru_maxrss`` survives exec on Linux: a
+    worker started by a large process (a test runner) would report its parent's peak. A
+    child's ``ru_maxrss`` has the same flaw, so the whisper.cpp figure is an upper bound
+    that can include the worker's own peak.
+    """
+    self_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    try:
+        m = re.search(r"^VmHWM:\s+(\d+) kB", Path("/proc/self/status").read_text(), re.M)
+        self_kb = int(m.group(1)) if m else self_kb
+    except OSError:
+        pass
+    return (self_kb + resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss) / 1024
 
 
 def run_segments(engine: SttEngine, segments: list[Segment]) -> list[dict]:
