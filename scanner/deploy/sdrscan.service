@@ -11,7 +11,7 @@
 # The container is started by /usr/local/lib/sdrscan/sdrscan-run, which passes only the
 # dongle's own USB node (--device), never the whole /dev/bus/usb tree: other devices on the
 # bus must stay out of reach of libusb in the container. A replugged or reset dongle gets a
-# new node; the scanner then exits with code 71 after about 10 minutes of failed reopens,
+# new node; the scanner then exits with code 71 after about 75 s of failed reopens,
 # and systemd restarts the wrapper, which finds the new node. The docker run flags and
 # resource limits live in that wrapper.
 

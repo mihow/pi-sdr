@@ -38,9 +38,11 @@ from .voice.gate import Gate, VoiceGate, VoiceState
 
 BACKOFF_START_S = 5.0
 BACKOFF_MAX_S = 300.0
-# Consecutive failed opens (about 10 minutes of backoff) before the runner gives up, so the
-# container restarts and sees the USB bus afresh after a replug.
-MAX_OPEN_FAILURES = 8
+# Consecutive failed opens (5 + 10 + 20 + 40 s, about 75 s of backoff) before the runner
+# gives up. A short outage on the same node is ridden out in-process. After a USB reset the
+# dongle comes back at a new node, which the container cannot see (deploy/sdrscan-run passes
+# only the node present at start), so exiting soon lets systemd restart on the new node.
+MAX_OPEN_FAILURES = 5
 MAX_UNVISITED_S = 900.0  # longer than a tier B pass, so tier B tracks are not cut short
 PRUNE_EVERY_S = 86400.0
 SPUR_MARKS_KEY = "spur_marks"
