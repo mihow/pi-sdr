@@ -261,8 +261,19 @@ class ClipStore:
         st = self._statvfs(str(self.data_root))
         return st.f_bavail / st.f_blocks if st.f_blocks else 0.0
 
+    def free_bytes(self) -> int:
+        self.data_root.mkdir(parents=True, exist_ok=True)
+        st = self._statvfs(str(self.data_root))
+        return int(st.f_bavail * st.f_frsize)
+
+    def _below(self, frac: float, floor_bytes: int) -> bool:
+        """True when free space is under the floor; a non-zero byte floor wins over the fraction."""
+        if floor_bytes > 0:
+            return self.free_bytes() < floor_bytes
+        return self.free_frac() < frac
+
     def disk_low(self) -> bool:
-        return self.free_frac() < self.cfg.free_stop_frac
+        return self._below(self.cfg.free_stop_frac, self.cfg.free_stop_bytes)
 
     def path_for(self, clip_id: int) -> Path | None:
         c = self._clips.get(clip_id)
@@ -286,10 +297,11 @@ class ClipStore:
                 used -= victim.nbytes
                 evicted.append(self._evict(victim))
         while True:
-            free = self.free_frac()
-            if self.used_bytes() <= self.cfg.clip_quota_bytes and free >= self.cfg.free_evict_frac:
+            short = self._below(self.cfg.free_evict_frac, self.cfg.free_evict_bytes)
+            if self.used_bytes() <= self.cfg.clip_quota_bytes and not short:
                 break
-            victim = self._victim(allow_pinned=free < self.cfg.free_pinned_frac)
+            pinned_ok = self._below(self.cfg.free_pinned_frac, self.cfg.free_pinned_bytes)
+            victim = self._victim(allow_pinned=pinned_ok)
             if victim is None:
                 break
             evicted.append(self._evict(victim))

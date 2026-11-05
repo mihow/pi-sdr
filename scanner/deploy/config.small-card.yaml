@@ -1,0 +1,32 @@
+# sdrscan configuration for a rig with a small SD card and a capped mobile link, before
+# speech-to-text is chosen. Install with: install.sh --config config.small-card.yaml
+# Like the template, it is copied only when /etc/sdrscan/config.yaml is missing.
+
+site_id: site                  # a short label shown on the dashboard
+data_root: /var/lib/sdrscan
+stage_root: /run/sdrscan
+labels_path: null
+
+quota:
+  clip_quota_bytes: 314572800  # 300 MiB of recent voice clips (Opus 8 kbit/s, about 80 h)
+  raw_retention_days: 7        # raw rows grow about 1.5 MB per hour; rollups are kept
+  free_evict_bytes: 1073741824 # below 1.0 GiB free, delete the oldest clips
+  free_pinned_bytes: 858993459 # below 0.8 GiB free, pinned clips may go too
+  free_stop_bytes: 536870912   # below 0.5 GiB free, store no new clips
+
+thermal:
+  hot_c: 70.0                  # 158 °F: less dwell, speech-to-text paused
+  very_hot_c: 75.0             # 167 °F: no dwell, slower sweep
+  critical_c: 80.0             # 176 °F: sweep paced to one hop per second
+
+uplink:
+  target: s3
+  secrets_env: /etc/sdrscan/uplink.env
+  cap_bytes: 30000000          # hard monthly cap for everything the scanner sends
+  include_transcripts: false
+
+live:
+  enabled: false
+
+stt:
+  engine: none                 # chosen later by stt-bench on the rig
