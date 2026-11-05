@@ -261,3 +261,40 @@ def test_rows_stamped_before_ntp_sync_are_shifted_when_the_clock_steps(tmp_path,
     ).fetchone()
     assert "clock_unsynced" not in svc.health.sample().flags
     svc.shutdown()
+
+
+def test_auto_speech_to_text_without_a_choice_falls_back_and_says_so(
+    tmp_path, vclock, sys_root, monkeypatch
+):
+    """engine: auto with no stt-bench choice runs the first available fallback engine,
+    builds it once, and health carries stt_auto_fallback."""
+    import types
+
+    import numpy as np
+
+    from sdrscan import service as service_mod
+    from sdrscan.voice.stt import FakeStt
+
+    (tmp_path / "w").write_text("")
+    (tmp_path / "m.bin").write_text("")
+    cfg = _plain_cfg(tmp_path)
+    stt = dataclasses.replace(
+        cfg.stt, engine="auto", whisper_binary=tmp_path / "w", whisper_model=tmp_path / "m.bin"
+    )
+    cfg = dataclasses.replace(cfg, stt=stt)
+    built: list[str] = []
+
+    def fake_make(c, mode, work_dir=None, choice_path=None, selection=None):
+        built.append(selection.engine)
+        return FakeStt(["unit two"])
+
+    monkeypatch.setattr(service_mod, "make_stt", fake_make)
+    svc = _service(cfg, vclock, sys_root, inline_stt=True)
+    assert (svc.stt_selection.engine, svc.stt_selection.source) == ("whisper_cpp", "fallback")
+    assert "stt_auto_fallback" in svc.health.sample().flags
+    for i in range(3):
+        tx = types.SimpleNamespace(clip_id=i + 1, hz=146_520_000, band="ham_2m")
+        svc._on_tx(i + 1, tx, np.zeros(16_000))
+    svc._drain_stt()
+    assert built == ["whisper_cpp"]  # loaded once, not per clip
+    svc.shutdown()

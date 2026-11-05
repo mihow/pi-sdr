@@ -24,7 +24,10 @@ live:
   port: 8073
 
 stt:
-  engine: whisper_cpp          # whisper-cli and the model are built into the image
-  binary: /usr/local/bin/whisper-cli
-  model: /usr/share/sdrscan/models/ggml-base.en-q5_1.bin
+  # The rig runs whisper.cpp base.en, built into the image. `auto` would run the engine
+  # `sdrscan stt-bench` chose on this rig; other engines are for build hosts (README).
+  engine: whisper_cpp
   threads: 2                   # paused automatically when the rig runs hot
+  whisper_binary: /usr/local/bin/whisper-cli
+  whisper_model: /usr/share/sdrscan/models/ggml-base.en-q5_1.bin
+  whisper_audio_ctx: 1024      # -ac floor; lowest WER on the corpus bench

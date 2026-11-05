@@ -97,14 +97,39 @@ class UplinkConfig:
     include_transcripts: bool = False
 
 
+# Concrete speech-to-text engines (voice/stt.py) and the names the config also accepts.
+STT_ENGINES = ("whisper_cpp", "sherpa_parakeet", "sherpa_moonshine", "faster_whisper")
+STT_NAMES = ("none", "auto", "fake", *STT_ENGINES)
+
+
 @dataclasses.dataclass(frozen=True)
 class SttConfig:
-    engine: str = "none"  # none | whisper_cpp | fake (tests)
-    binary: Path | None = None
-    model: Path | None = None
+    # none | auto | whisper_cpp | sherpa_parakeet | sherpa_moonshine | faster_whisper | fake.
+    # auto runs the engine that `sdrscan stt-bench` chose on this host (choice_path), and
+    # the first available engine of `fallback` when there is no valid choice.
+    engine: str = "none"
     threads: int = 2
     min_confidence: float = 0.6
     queue_max: int = 50
+    # Models are local files; nothing is downloaded at run time.
+    whisper_binary: Path | None = None  # whisper-cli
+    whisper_model: Path | None = None  # a ggml model file
+    # -ac sized to the clip but at least this many frames (1500 = 30 s); 0 = full context.
+    # 1024 had the lowest WER on the corpus bench (spec section 5.9).
+    whisper_audio_ctx: int = 1024
+    whisper_suppress_nst: bool = False  # whisper-cli -sns
+    parakeet_model: Path | None = None  # sherpa-onnx Parakeet TDT directory
+    moonshine_model: Path | None = None  # sherpa-onnx Moonshine directory
+    faster_whisper_model: Path | None = None  # CTranslate2 model directory
+    faster_whisper_beam: int = 5
+    # engine: auto. The default choice file is <data_root>/stt-choice.json.
+    choice_path: Path | None = None
+    fallback: str = "sherpa_parakeet,faster_whisper,whisper_cpp"
+    # The stt-bench selection limits (spec section 5.9).
+    max_rtf: float = 0.5
+    max_rss_mb: float = 1200.0
+    max_model_mb: float = 800.0
+    max_noise_shown_frac: float = 0.15
 
 
 @dataclasses.dataclass(frozen=True)
@@ -223,8 +248,13 @@ def _validate(cfg: Config) -> None:
             raise ConfigError(f"duty.{name}: share must be between 0 and 1")
     if cfg.uplink.target not in {"file", "s3", "http_put", "http_post"}:
         raise ConfigError("uplink.target: must be file, s3, http_put or http_post")
-    if cfg.stt.engine not in {"none", "whisper_cpp", "fake"}:
-        raise ConfigError("stt.engine: must be none, whisper_cpp or fake")
+    if cfg.stt.engine not in STT_NAMES:
+        raise ConfigError(f"stt.engine: must be one of {', '.join(STT_NAMES)}")
+    for name in filter(None, (n.strip() for n in cfg.stt.fallback.split(","))):
+        if name not in STT_ENGINES:
+            raise ConfigError(f"stt.fallback: unknown engine {name!r}")
+    if cfg.stt.whisper_audio_ctx < 0 or cfg.stt.threads < 1:
+        raise ConfigError("stt: whisper_audio_ctx must be >= 0 and threads >= 1")
     if cfg.prose.engine not in {"none", "llama_cli"}:
         raise ConfigError("prose.engine: must be none or llama_cli")
     if cfg.quota.clip_quota_bytes < 0:

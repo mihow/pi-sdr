@@ -43,7 +43,7 @@ from .store import Store
 from .summarize import build_digest, encode_digest
 from .tracker import Transmission
 from .uplink import DigestPublisher, Ledger, make_target
-from .voice.stt import SttEngine, make_stt
+from .voice.stt import NullStt, SttEngine, make_stt, select_stt
 
 log = logging.getLogger("sdrscan.service")
 STT_MAX_S = 30.0
@@ -113,11 +113,23 @@ class Service:
             iq_age=self._iq_age,
             quota_used=self.clips.used_bytes,
             status=lambda: self.runner.status,
-            extra_flags=lambda: ["uplink_unconfigured"] if self.uplink_error else [],
+            extra_flags=self._extra_flags,
             clock_synced=clock_synced,
             **fs_kw,
         )
         self.runner.mode_fn = self.health.mode
+        # The speech-to-text engine is chosen once at start (stt.engine: auto reads the
+        # stt-bench choice file) and built lazily on the STT worker thread, at nice 19.
+        self.stt_selection = select_stt(cfg.stt, root / "stt-choice.json")
+        self._stt_engine: SttEngine | None = None
+        self._stt_flags: list[str] = list(self.stt_selection.flags)
+        if cfg.stt.engine != "none":
+            log.info(
+                "speech-to-text: %s (%s)%s",
+                self.stt_selection.engine,
+                self.stt_selection.source,
+                f"; {self.stt_selection.detail}" if self.stt_selection.detail else "",
+            )
         self.runner.clock_ok_fn = lambda: self._clock_synced() is not False
         self.ledger = Ledger(self.store, cfg.uplink, clock)
         # A missing or bad uplink configuration (the state of a fresh install) turns pushes
@@ -298,17 +310,35 @@ class Service:
         self.digests += 1
         return digest
 
+    def _extra_flags(self) -> list[str]:
+        return (["uplink_unconfigured"] if self.uplink_error else []) + self._stt_flags
+
     # -- speech-to-text ----------------------------------------------------------------
     def _stt(self) -> SttEngine:
         mode = self.health.mode()
-        if self._stt_fixed is not None and mode == "normal":
+        if mode != "normal":
+            return NullStt()  # every other mode is hot; a loaded model stays loaded
+        if self._stt_fixed is not None:
             return self._stt_fixed
-        return make_stt(self.cfg.stt, mode, work_dir=self.cfg.stage_root)
+        if self._stt_engine is None:
+            try:
+                self._stt_engine = make_stt(
+                    self.cfg.stt,
+                    mode,
+                    work_dir=self.cfg.stage_root,
+                    selection=self.stt_selection,
+                )
+            except Exception as exc:  # noqa: BLE001 - a broken model must not stop the scan
+                log.error("speech-to-text engine %s failed to load: %s",
+                          self.stt_selection.engine, exc)  # fmt: skip
+                self._stt_engine = NullStt()
+                self._stt_flags.append("stt_unavailable")
+        return self._stt_engine
 
     def _on_tx(self, tx_id: int, tx: Transmission, pcm: np.ndarray | None) -> None:
         if pcm is None or tx.clip_id is None:
             return
-        if self.cfg.stt.engine == "none" and self._stt_fixed is None:
+        if self.stt_selection.engine == "none" and self._stt_fixed is None:
             return
         pcm16 = (np.clip(pcm[: int(STT_MAX_S * 16_000)], -1, 1) * 32767).astype(np.int16)
         try:

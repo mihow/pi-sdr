@@ -18,7 +18,7 @@ import threading
 from pathlib import Path
 
 from .clock import RealClock
-from .config import Config, load_config
+from .config import STT_NAMES, Config, load_config
 
 DEFAULT_CONFIG = Path("/etc/sdrscan/config.yaml")
 SIM_EPOCH = 1_780_272_000.0  # 2026-06-01 00:00 UTC, a Monday
@@ -355,25 +355,63 @@ def cmd_gate(args) -> int:
 
 
 def cmd_stt(args) -> int:
-    from .config import SttConfig
+    import dataclasses
+
     from .stages import transcribe
-    from .voice.stt import make_stt, read_wav
+    from .voice.stt import MODEL_FIELD, make_stt, read_wav
 
     cfg = _config(args.config)
     stt_cfg = cfg.stt
-    if args.engine or args.binary or args.model:
-        stt_cfg = SttConfig(
-            engine=args.engine or ("whisper_cpp" if args.binary else stt_cfg.engine),
-            binary=Path(args.binary) if args.binary else stt_cfg.binary,
-            model=Path(args.model) if args.model else stt_cfg.model,
-            threads=args.threads or stt_cfg.threads,
-        )
+    if args.engine:
+        stt_cfg = dataclasses.replace(stt_cfg, engine=args.engine)
+    elif args.binary and stt_cfg.engine in ("none", "auto"):
+        stt_cfg = dataclasses.replace(stt_cfg, engine="whisper_cpp")
+    if args.binary:
+        stt_cfg = dataclasses.replace(stt_cfg, whisper_binary=Path(args.binary))
+    if args.model and stt_cfg.engine in MODEL_FIELD:
+        stt_cfg = dataclasses.replace(stt_cfg, **{MODEL_FIELD[stt_cfg.engine]: Path(args.model)})
+    if args.threads:
+        stt_cfg = dataclasses.replace(stt_cfg, threads=args.threads)
     pcm, rate = read_wav(Path(args.wav))
-    rec = transcribe(pcm, make_stt(stt_cfg, "normal"), rate=rate)
+    engine = make_stt(stt_cfg, "normal", choice_path=_choice_path(cfg))
+    rec = transcribe(pcm, engine, rate=rate)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rec, sort_keys=True) + "\n")
     print(json.dumps(rec, sort_keys=True))
+    return 0
+
+
+def _choice_path(cfg) -> Path:
+    return cfg.stt.choice_path or cfg.data_root / "stt-choice.json"
+
+
+def cmd_stt_bench(args) -> int:
+    import dataclasses
+
+    from .voice import stt_bench as sb
+
+    cfg = _config(args.config)
+    stt_cfg = cfg.stt
+    if args.threads:
+        stt_cfg = dataclasses.replace(stt_cfg, threads=args.threads)
+    lim = sb.Limits.from_cfg(stt_cfg)
+    for key in ("max_rtf", "max_rss_mb", "max_model_mb", "max_noise_shown_frac"):
+        if getattr(args, key) is not None:
+            lim = dataclasses.replace(lim, **{key: getattr(args, key)})
+    cands = sb.parse_candidates(args.engines, stt_cfg)
+    choice, details = sb.run_bench(
+        Path(args.reference), cands, stt_cfg, lim, log=lambda m: print(m, file=sys.stderr)
+    )
+    out = Path(args.out) if args.out else _choice_path(cfg)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".tmp")
+    tmp.write_text(json.dumps(choice, indent=1, sort_keys=True) + "\n")
+    tmp.replace(out)
+    if args.details:
+        Path(args.details).write_text(json.dumps(details, indent=1) + "\n")
+    print(sb.format_table(choice))
+    print(f"wrote {out}")
     return 0
 
 
@@ -496,11 +534,32 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--wav", required=True)
     x.add_argument("--out", required=True)
     x.add_argument("--config")
-    x.add_argument("--engine", choices=("none", "whisper_cpp", "fake"))
+    x.add_argument("--engine", choices=STT_NAMES)
     x.add_argument("--binary", help="whisper-cli")
-    x.add_argument("--model", help="ggml model file")
+    x.add_argument("--model", help="the engine's model file or directory")
     x.add_argument("--threads", type=int)
     x.set_defaults(fn=cmd_stt)
+
+    sb = sub.add_parser(
+        "stt-bench",
+        help="measure the speech-to-text engines on this host and choose one",
+        description="Runs each engine over a private reference set and writes the choice "
+        "that stt.engine: auto reads. Rule: lowest WER among engines within max_rtf, "
+        "max_rss_mb, max_model_mb and max_noise_shown_frac; ties go to the smaller RSS.",
+    )
+    sb.add_argument("--reference", required=True, help="reference.json of the reference set")
+    sb.add_argument("--config")
+    sb.add_argument(
+        "--engines",
+        help="comma-separated name[:key=value...], e.g. "
+        "whisper_cpp:audio_ctx=768,faster_whisper:model=/m/small.en (default: all)",
+    )
+    sb.add_argument("--threads", type=int, help="default: stt.threads")
+    sb.add_argument("--out", help="default: stt.choice_path or <data_root>/stt-choice.json")
+    sb.add_argument("--details", help="also write each engine's per-segment text (private)")
+    for key in ("max_rtf", "max_rss_mb", "max_model_mb", "max_noise_shown_frac"):
+        sb.add_argument(f"--{key.replace('_', '-')}", dest=key, type=float)
+    sb.set_defaults(fn=cmd_stt_bench)
 
     d = sub.add_parser("digest", help="build a digest from a database or a detections file")
     src = d.add_mutually_exclusive_group(required=True)

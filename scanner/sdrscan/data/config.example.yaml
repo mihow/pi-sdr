@@ -73,12 +73,26 @@ live:
   port: 8073
 
 stt:                           # speech-to-text on kept voice clips; off by default
-  engine: none                 # none | whisper_cpp
-  binary: null                 # path to whisper-cli
-  model: null                  # path to a ggml model, for example tiny.en
+  # none | auto | whisper_cpp | sherpa_parakeet | sherpa_moonshine | faster_whisper
+  # auto runs the engine `sdrscan stt-bench` chose on this host (see choice_path).
+  engine: none
   threads: 2
   min_confidence: 0.6          # below this a transcript is stored but never shown as fact
   queue_max: 50
+  whisper_binary: null         # path to whisper-cli
+  whisper_model: null          # path to a ggml model, for example base.en
+  whisper_audio_ctx: 1024      # -ac sized to the clip, at least this; 0 = full context
+  whisper_suppress_nst: false  # whisper-cli -sns
+  parakeet_model: null         # sherpa-onnx Parakeet TDT 0.6B v2 int8 directory
+  moonshine_model: null        # sherpa-onnx Moonshine int8 directory
+  faster_whisper_model: null   # CTranslate2 (faster-whisper) model directory
+  faster_whisper_beam: 5
+  choice_path: null            # engine: auto; default <data_root>/stt-choice.json
+  fallback: sherpa_parakeet,faster_whisper,whisper_cpp   # auto with no valid choice
+  max_rtf: 0.5                 # stt-bench limits: real-time factor at `threads`
+  max_rss_mb: 1200.0           #   peak resident memory of the engine process
+  max_model_mb: 800.0          #   model files on disk
+  max_noise_shown_frac: 0.15   #   share of noise clips with a transcript shown as fact
 
 prose:                         # optional one-paragraph summary from a small local LLM
   engine: none                 # none | llama_cli
