@@ -4,6 +4,9 @@
 #   docker buildx build --platform linux/arm64 --target runtime -t sdrscan:arm64 --load .
 
 ARG DEBIAN=debian:trixie-slim
+# The runtime image comes with or without speech-to-text. The default carries whisper.cpp;
+# a scanner-only image for a capped link is built with --build-arg RUNTIME_BASE=base.
+ARG RUNTIME_BASE=base-stt
 
 FROM ${DEBIAN} AS wheels
 # webrtcvad ships no aarch64 wheel, so it is compiled here and only the wheel moves on.
@@ -46,10 +49,6 @@ RUN python3 -m venv --system-site-packages /opt/sdrscan
 ENV PATH=/opt/sdrscan/bin:$PATH
 COPY --from=wheels /wheels /tmp/wheels
 RUN pip install --no-cache-dir --no-index /tmp/wheels/*.whl && rm -rf /tmp/wheels
-# Speech-to-text: whisper-cli and the base.en model (about 60 MB), used by stt.engine
-# whisper_cpp. config.template.yaml points at these paths.
-COPY --from=whisper --chmod=0755 /out/bin/whisper-cli /usr/local/bin/whisper-cli
-COPY --from=whisper --chmod=0644 /out/models/ /usr/share/sdrscan/models/
 WORKDIR /src
 COPY pyproject.toml ./
 COPY sdrscan ./sdrscan
@@ -59,7 +58,13 @@ RUN pip install --no-cache-dir --no-deps --no-build-isolation . 2>/dev/null \
      && pip install --no-cache-dir --no-deps --no-build-isolation . \
      && apt-get purge -y python3-setuptools && rm -rf /var/lib/apt/lists/*)
 
-FROM base AS test
+# Speech-to-text: whisper-cli and the base.en model (about 60 MB), used by stt.engine
+# whisper_cpp. config.template.yaml points at these paths.
+FROM base AS base-stt
+COPY --from=whisper --chmod=0755 /out/bin/whisper-cli /usr/local/bin/whisper-cli
+COPY --from=whisper --chmod=0644 /out/models/ /usr/share/sdrscan/models/
+
+FROM base-stt AS test
 RUN apt-get update && apt-get install -y --no-install-recommends python3-pytest \
  && rm -rf /var/lib/apt/lists/*
 COPY tests ./tests
@@ -73,7 +78,7 @@ ENV SDRSCAN_WHISPER_BIN=/usr/local/bin/whisper-cli \
 ENV SDRSCAN_SLOW_HOST=1
 CMD ["python", "-m", "pytest", "-q", "-m", "not slow and not browser and not fixtures and not hw"]
 
-FROM base AS runtime
+FROM ${RUNTIME_BASE} AS runtime
 # Runs as a system user. The host passes the dongle with --device and adds the group that
 # owns it (plugdev on Raspberry Pi OS) with --group-add; see deploy/sdrscan.service.
 RUN useradd --system --home /var/lib/sdrscan --shell /usr/sbin/nologin sdrscan \

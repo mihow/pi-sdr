@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Start the sdrscan container with access to the RTL-SDR dongle's USB node only.
+#
+# The whole /dev/bus/usb tree is never mapped: other devices share the bus (on the field
+# rig, an ESP32 relay board whose serial port carries lamp control and logging), and libusb
+# inside the container must not be able to open or detach them. The node path changes on
+# every replug, so it is resolved here at each start. When the dongle disappears, sdrscan
+# exits (code 71) and systemd restarts this wrapper, which finds the new node.
+set -euo pipefail
+
+SYSFS_USB="${SDRSCAN_SYSFS_USB:-/sys/bus/usb/devices}"
+DOCKER="${SDRSCAN_DOCKER:-/usr/bin/docker}"
+VENDOR="${SDRSCAN_USB_VENDOR:-0bda}"
+PRODUCT="${SDRSCAN_USB_PRODUCT:-2838}"
+MEMORY="${SDRSCAN_MEMORY:-1g}"
+EXIT_NO_DONGLE=71
+
+node=""
+for d in "$SYSFS_USB"/*; do
+  if [ ! -r "$d/idVendor" ] || [ ! -r "$d/idProduct" ]; then
+    continue
+  fi
+  if [ "$(cat "$d/idVendor")" = "$VENDOR" ] && [ "$(cat "$d/idProduct")" = "$PRODUCT" ]; then
+    node=$(printf '/dev/bus/usb/%03d/%03d' "$(cat "$d/busnum")" "$(cat "$d/devnum")")
+    break
+  fi
+done
+if [ -z "$node" ]; then
+  echo "sdrscan-run: no USB device ${VENDOR}:${PRODUCT} found" >&2
+  exit "$EXIT_NO_DONGLE"
+fi
+if [ "${SDRSCAN_DEV_STAT:-1}" = "1" ] && [ ! -c "$node" ]; then
+  echo "sdrscan-run: $node is not a character device" >&2
+  exit "$EXIT_NO_DONGLE"
+fi
+echo "sdrscan-run: dongle at $node"
+
+# shellcheck disable=SC2086  # SDRSCAN_EXTRA_MOUNTS holds several -v flags
+exec "$DOCKER" run --rm --name sdrscan \
+  --device "$node" \
+  --group-add "${SDRSCAN_USB_GID:-0}" \
+  --read-only --tmpfs /run/sdrscan:size=64m --tmpfs /tmp:size=16m \
+  -v sdrscan-data:/var/lib/sdrscan -v /etc/sdrscan:/etc/sdrscan:ro \
+  ${SDRSCAN_EXTRA_MOUNTS:-} \
+  --network host \
+  --cpus 2 --cpu-shares 512 --blkio-weight 100 --memory "$MEMORY" --memory-swap "$MEMORY" \
+  --log-opt max-size=5m --log-opt max-file=2 \
+  "${SDRSCAN_IMAGE:-sdrscan:current}"

@@ -5,13 +5,15 @@
 # the container (docker run flags), because the container's processes live in Docker's
 # cgroup, not this unit's (Nice= or IOSchedulingClass= here would apply only to the docker
 # client). Inside the container, speech-to-text and the prose model run at nice 19.
-# --blkio-weight takes effect only where the disk uses the BFQ I/O scheduler. A hung USB read is caught by the scanner's own 120 s progress
-# watchdog, which exits the process so Restart=always starts it again.
+# --blkio-weight takes effect only where the disk uses the BFQ I/O scheduler. A hung USB
+# read is caught by the scanner's own 120 s progress watchdog, which exits the process so Restart=always starts it again.
 #
-# /dev/bus/usb is bind-mounted with a cgroup rule for USB character devices (major 189)
-# instead of --device, which copies only the nodes that exist at start. A replugged or
-# reset dongle gets a new node, and the running scanner can reopen it. When the radio stays
-# missing for about 10 minutes, the scanner exits with code 71 and systemd restarts it.
+# The container is started by /usr/local/lib/sdrscan/sdrscan-run, which passes only the
+# dongle's own USB node (--device), never the whole /dev/bus/usb tree: other devices on the
+# bus must stay out of reach of libusb in the container. A replugged or reset dongle gets a
+# new node; the scanner then exits with code 71 after about 10 minutes of failed reopens,
+# and systemd restarts the wrapper, which finds the new node. The docker run flags and
+# resource limits live in that wrapper.
 
 [Unit]
 Description=sdrscan unattended radio scanner (container)
@@ -28,15 +30,7 @@ TimeoutStartSec=300
 Restart=always
 RestartSec=15
 ExecStartPre=-/usr/bin/docker rm -f sdrscan
-ExecStart=/usr/bin/docker run --rm --name sdrscan \
-  -v /dev/bus/usb:/dev/bus/usb --device-cgroup-rule 'c 189:* rmw' \
-  --group-add ${SDRSCAN_USB_GID} \
-  --read-only --tmpfs /run/sdrscan:size=64m --tmpfs /tmp:size=16m \
-  -v sdrscan-data:/var/lib/sdrscan -v /etc/sdrscan:/etc/sdrscan:ro \
-  --network host \
-  --cpus 2 --cpu-shares 512 --blkio-weight 100 --memory 1g --memory-swap 1g \
-  --log-opt max-size=5m --log-opt max-file=2 \
-  sdrscan:current
+ExecStart=/usr/local/lib/sdrscan/sdrscan-run
 ExecStop=/usr/bin/docker stop -t 30 sdrscan
 
 [Install]

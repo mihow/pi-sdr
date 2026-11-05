@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install or upgrade the sdrscan container service. Idempotent.
 #
-#   install.sh [--dry-run] [--image FILE.tar.zst] [--skip-preflight]
+#   install.sh [--dry-run] [--image FILE.tar.zst] [--config FILE.yaml] [--skip-preflight]
 #
 # Steps: preflight checks, load the image (the old one is kept as sdrscan:previous),
 # write /etc/sdrscan/config.yaml from the template when missing, install and start the
@@ -12,17 +12,19 @@ set -euo pipefail
 
 DRY_RUN=0
 IMAGE=""
+CONFIG_SRC=""
 SKIP_PREFLIGHT=0
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ETC="${SDRSCAN_ETC:-/etc/sdrscan}"
 UNIT_DIR="${SDRSCAN_UNIT_DIR:-/etc/systemd/system}"
 HEALTH_WAIT_S="${SDRSCAN_HEALTH_WAIT_S:-120}"
-MIN_FREE_KB=$((3 * 1024 * 1024))
+MIN_FREE_KB="${SDRSCAN_MIN_FREE_KB:-$((1536 * 1024))}"  # 1.5 GiB; the image needs ~0.3 GiB, the rest is the runtime floor
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --image) IMAGE="$2"; shift ;;
+    --config) CONFIG_SRC="$2"; shift ;;
     --skip-preflight) SKIP_PREFLIGHT=1 ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -96,7 +98,7 @@ run install -d -m 0755 "$ETC"
 if [ -e "$ETC/config.yaml" ]; then
   echo "$ETC/config.yaml exists; kept"
 else
-  run install -m 0644 "$HERE/config.template.yaml" "$ETC/config.yaml"
+  run install -m 0644 "${CONFIG_SRC:-$HERE/config.template.yaml}" "$ETC/config.yaml"
 fi
 if [ ! -e "$ETC/uplink.env" ]; then
   echo "+ create $ETC/uplink.env (mode 0600) with the S3 settings left for the owner"
@@ -117,6 +119,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 step "4. Service unit"
+run install -D -m 0755 "$HERE/sdrscan-run" "${SDRSCAN_LIB:-/usr/local/lib/sdrscan}/sdrscan-run"
 run install -m 0644 "$HERE/sdrscan.service" "$UNIT_DIR/sdrscan.service"
 run systemctl daemon-reload
 run systemctl enable sdrscan.service
