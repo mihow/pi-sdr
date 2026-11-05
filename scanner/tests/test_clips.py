@@ -201,3 +201,41 @@ def test_startup_deletes_clip_files_that_have_no_row(env, vclock):
     assert not orphan.exists()
     assert again.path_for(kept).exists()
     assert again.used_bytes() == 50 * KB
+
+
+# Absolute free-space floors: on a small card a percentage misleads (12 % of 15 GB is 1.8 GB),
+# so the field config sets byte floors, which win over the fractions when non-zero.
+GB = 1024**3
+
+
+def _set_free_bytes(fs: FakeFs, free_bytes: int) -> None:
+    fs.free_frac = free_bytes / (4096 * 1_000_000)
+
+
+def test_byte_floor_keeps_clips_when_the_fraction_alone_would_evict(env, vclock):
+    store, fs, make, _ = env
+    clips = make(quota=10_000_000, free_evict_frac=0.5, free_evict_bytes=int(1.0 * GB))
+    _clip(clips, vclock, 462_000_000)
+    _clip(clips, vclock, 462_012_500)
+    _set_free_bytes(fs, int(1.7 * GB))  # about 44 % free: under the fraction, over the floor
+    assert clips.enforce() == []
+    assert clips.used_bytes() > 0
+
+
+def test_byte_floor_evicts_below_the_floor(env, vclock):
+    store, fs, make, _ = env
+    clips = make(quota=10_000_000, free_evict_frac=0.0, free_evict_bytes=int(1.0 * GB))
+    _clip(clips, vclock, 462_000_000)
+    _clip(clips, vclock, 462_012_500)
+    _set_free_bytes(fs, int(0.9 * GB))
+    clips.enforce()
+    assert clips.used_bytes() == 0
+
+
+def test_byte_stop_floor_reports_disk_low(env, vclock):
+    store, fs, make, _ = env
+    clips = make(free_stop_frac=0.0, free_stop_bytes=int(0.5 * GB))
+    _set_free_bytes(fs, int(0.6 * GB))
+    assert not clips.disk_low()
+    _set_free_bytes(fs, int(0.4 * GB))
+    assert clips.disk_low()

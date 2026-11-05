@@ -161,7 +161,11 @@ class HealthMonitor:
         flags = []
         if not dongle:
             flags.append("no_dongle")
-        if free_pct is not None and free_pct < quota.free_evict_frac * 100:
+        if quota.free_evict_bytes > 0:
+            low = free_mb is not None and free_mb * MB < quota.free_evict_bytes
+        else:
+            low = free_pct is not None and free_pct < quota.free_evict_frac * 100
+        if low:
             flags.append("disk_low")
         now = self.clock.now()
         clock_ok = now >= MIN_VALID_EPOCH and self._clock_synced() is not False

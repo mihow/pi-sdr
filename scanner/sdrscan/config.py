@@ -69,6 +69,11 @@ class QuotaConfig:
     free_prune_frac: float = 0.12
     free_pinned_frac: float = 0.10
     free_stop_frac: float = 0.05
+    # Absolute floors in bytes. When non-zero they replace the matching fraction, because
+    # a percentage misleads on a small card (12 % of 15 GB is 1.8 GB). 0 keeps the fraction.
+    free_evict_bytes: int = 0
+    free_pinned_bytes: int = 0
+    free_stop_bytes: int = 0
     raw_retention_days: int = 90
     min_clip_s: float = 1.5
 
