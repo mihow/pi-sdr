@@ -82,13 +82,22 @@ if docker image inspect sdrscan:current >/dev/null 2>&1; then
   run docker tag sdrscan:current sdrscan:previous
 fi
 if [ -n "$IMAGE" ]; then
+  # The tarball's own tag is read from docker load's output ("Loaded image: NAME:TAG"),
+  # so any build tag works and a stale local tag can never be promoted by mistake.
+  loaded="sdrscan:<loaded tag>"
   if [ "${IMAGE%.zst}" != "$IMAGE" ]; then
     printf '+ zstd -dc %s | docker load\n' "$IMAGE"
-    if [ "$DRY_RUN" -eq 0 ]; then zstd -dc "$IMAGE" | docker load; fi
+    if [ "$DRY_RUN" -eq 0 ]; then out=$(zstd -dc "$IMAGE" | docker load); fi
   else
-    run docker load -i "$IMAGE"
+    echo "+ docker load -i $IMAGE"
+    if [ "$DRY_RUN" -eq 0 ]; then out=$(docker load -i "$IMAGE"); fi
   fi
-  run docker tag sdrscan:arm64 sdrscan:current
+  if [ "$DRY_RUN" -eq 0 ]; then
+    echo "$out"
+    loaded=$(printf '%s\n' "$out" | sed -n 's/^Loaded image: //p' | tail -1)
+    [ -n "$loaded" ] || { echo "docker load reported no image tag" >&2; exit 1; }
+  fi
+  run docker tag "$loaded" sdrscan:current
 else
   echo "no --image given; using the image already tagged sdrscan:current"
 fi
