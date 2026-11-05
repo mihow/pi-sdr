@@ -12,8 +12,7 @@
 # dongle's own USB node (--device), never the whole /dev/bus/usb tree: other devices on the
 # bus must stay out of reach of libusb in the container. A replugged or reset dongle gets a
 # new node; the scanner exits with code 71 at the first reopen that reports the node gone
-# (about 5 s, then systemd restarts 15 s later),
-# and systemd restarts the wrapper, which finds the new node. The docker run flags and
+# (about 5 s), and 15 s later systemd restarts the wrapper, which finds the new node. The docker run flags and
 # resource limits live in that wrapper.
 
 [Unit]
