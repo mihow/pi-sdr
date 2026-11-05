@@ -1,4 +1,10 @@
-"""Command line: ``sdrscan run | simulate | digest | dashboard | bench | health``."""
+"""Command line for the scanner and its file-to-file stages.
+
+``run``, ``simulate``, ``bench`` and ``health`` drive the service. ``capture``, ``detect``,
+``demod``, ``gate``, ``stt``, ``digest`` and ``dashboard`` each read one file and write one,
+so a stage can be tested by hand from a recording (see the README). ``corpus cut`` slices a
+short clip out of a large capture.
+"""
 
 from __future__ import annotations
 
@@ -174,27 +180,53 @@ def _fake_sys(root: Path) -> Path:
 def cmd_digest(args) -> int:
     from .bandplan import BandPlan
     from .store import Store
-    from .summarize import build_digest, encode_digest
 
     cfg = _config(args.config)
-    clock = RealClock()
-    store = Store.open(Path(args.db), clock)
-    now = (
-        args.now
-        if args.now is not None
-        else (store.db.execute("SELECT MAX(t_end) FROM transmissions").fetchone()[0] or clock.now())
-    )
-    row = store.db.execute("SELECT * FROM health ORDER BY ts DESC LIMIT 1").fetchone()
-    health = None
-    if row is not None:
-        health = {
-            "mode": row["mode"],
-            "temp_c": row["temp_c"],
-            "dongle": bool(row["dongle_ok"]),
-            "quota_used_mb": row["quota_used_mb"],
-            "clock_ok": bool(row["clock_ok"]),
-        }
     plan = BandPlan.load(cfg.bandplan_path, cfg.labels_path)
+    if args.events:
+        import tempfile
+
+        from .clock import VirtualClock
+        from .stages import DETECTIONS_SCHEMA, read_jsonl, replay_detections
+
+        records = read_jsonl(Path(args.events), DETECTIONS_SCHEMA)
+        start = args.start if args.start is not None else SIM_EPOCH
+        clock = VirtualClock(start)
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store.open(Path(tmp) / "replay.sqlite", clock)
+            store.migrate()
+            replay_detections(records, cfg=cfg, plan=plan, store=store, clock=clock)
+            now = args.now if args.now is not None else clock.now()
+            sizes = _write_digest(store, None, now, plan, cfg, args)
+            store.close()
+    else:
+        store = Store.open(Path(args.db), RealClock())
+        now = (
+            args.now
+            if args.now is not None
+            else (
+                store.db.execute("SELECT MAX(t_end) FROM transmissions").fetchone()[0]
+                or RealClock().now()
+            )
+        )
+        row = store.db.execute("SELECT * FROM health ORDER BY ts DESC LIMIT 1").fetchone()
+        health = None
+        if row is not None:
+            health = {
+                "mode": row["mode"],
+                "temp_c": row["temp_c"],
+                "dongle": bool(row["dongle_ok"]),
+                "quota_used_mb": row["quota_used_mb"],
+                "clock_ok": bool(row["clock_ok"]),
+            }
+        sizes = _write_digest(store, health, float(now), plan, cfg, args)
+    print(json.dumps(sizes))
+    return 0
+
+
+def _write_digest(store, health, now: float, plan, cfg: Config, args) -> dict:
+    from .summarize import build_digest, encode_digest
+
     d = build_digest(
         store,
         health,
@@ -206,10 +238,10 @@ def cmd_digest(args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     raw = encode_digest(d)
+    gz = gzip.compress(raw, 9, mtime=0)
     (out / "digest.json").write_bytes(raw)
-    (out / "digest.json.gz").write_bytes(gzip.compress(raw, 9, mtime=0))
-    print(json.dumps({"raw_bytes": len(raw), "gz_bytes": len(gzip.compress(raw, 9, mtime=0))}))
-    return 0
+    (out / "digest.json.gz").write_bytes(gz)
+    return {"raw_bytes": len(raw), "gz_bytes": len(gz)}
 
 
 def cmd_dashboard(args) -> int:
@@ -218,6 +250,142 @@ def cmd_dashboard(args) -> int:
     digest = Path(args.digest)
     path = build_dashboard(digest.name, args.mode, Path(args.out))
     print(path)
+    return 0
+
+
+# -- file-to-file stages -----------------------------------------------------------------
+_SUFFIX = {"k": 1e3, "m": 1e6, "g": 1e9}
+
+
+def _hz(text: str) -> int:
+    """``443150000``, ``443.15M``, ``443.15MHz`` or ``162.475e6`` as integer Hz."""
+    t = text.strip().lower().removesuffix("hz")
+    mult = _SUFFIX.get(t[-1:], 1.0)
+    if mult != 1.0:
+        t = t[:-1]
+    try:
+        return int(round(float(t) * mult))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a frequency: {text!r}") from None
+
+
+def _plan(args):
+    from .bandplan import BandPlan
+
+    cfg = _config(args.config)
+    return cfg, BandPlan.load(cfg.bandplan_path, cfg.labels_path)
+
+
+def _open_slice(args):
+    from .iq.file import open_iq
+
+    f = open_iq(Path(args.iq))
+    start, stop = f.sample_range(args.offset, args.seconds)
+    return f, start, stop
+
+
+def cmd_capture(args) -> int:
+    import datetime
+
+    from .iq.file import IqWriter
+    from .iq.rtl import RtlSource
+    from .stages import capture
+
+    writer = IqWriter(
+        Path(args.out), rate=args.rate, center_hz=args.freq, gain_db=args.gain, fmt=args.format
+    )
+    started = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
+    source = RtlSource(RealClock(), device_index=args.device, rate=args.rate, threaded=False)
+    try:
+        health = capture(
+            source, writer, center_hz=args.freq, gain_db=args.gain, seconds=args.seconds
+        )
+    finally:
+        writer.close(extra={"device": "RTL-SDR", "recorded_at": started})
+    print(json.dumps({"out": str(writer.path), "n_samples": writer.n_samples, **health}))
+    return 0
+
+
+def cmd_detect(args) -> int:
+    from .stages import detect, summarize_detections, write_jsonl
+
+    cfg, plan = _plan(args)
+    f, start, stop = _open_slice(args)
+    records = list(detect(f, plan, cfg.detect, start=start, stop=stop, hop_s=args.hop_s))
+    write_jsonl(Path(args.out), records)
+    print(json.dumps(summarize_detections(records), sort_keys=True))
+    return 0
+
+
+def cmd_demod(args) -> int:
+    from .stages import demod, demod_channel
+    from .voice.stt import write_wav
+
+    _, plan = _plan(args)
+    f, start, stop = _open_slice(args)
+    channel = demod_channel(plan, args.freq, args.mode)
+    audio = demod(f, channel, start=start, stop=stop)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    write_wav(out, audio)
+    print(
+        json.dumps(
+            {
+                "out": str(out),
+                "hz": channel.hz,
+                "mode": channel.mode,
+                "seconds": round(len(audio) / 16_000, 3),
+            }
+        )
+    )
+    return 0
+
+
+def cmd_gate(args) -> int:
+    from .stages import gate, write_jsonl
+    from .voice.stt import read_wav
+
+    pcm, rate = read_wav(Path(args.wav))
+    records = gate(pcm, rate=rate)
+    write_jsonl(Path(args.out), records)
+    print(json.dumps(records[-1], sort_keys=True))
+    return 0
+
+
+def cmd_stt(args) -> int:
+    from .config import SttConfig
+    from .stages import transcribe
+    from .voice.stt import make_stt, read_wav
+
+    cfg = _config(args.config)
+    stt_cfg = cfg.stt
+    if args.engine or args.binary or args.model:
+        stt_cfg = SttConfig(
+            engine=args.engine or ("whisper_cpp" if args.binary else stt_cfg.engine),
+            binary=Path(args.binary) if args.binary else stt_cfg.binary,
+            model=Path(args.model) if args.model else stt_cfg.model,
+            threads=args.threads or stt_cfg.threads,
+        )
+    pcm, rate = read_wav(Path(args.wav))
+    rec = transcribe(pcm, make_stt(stt_cfg, "normal"), rate=rate)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(rec, sort_keys=True) + "\n")
+    print(json.dumps(rec, sort_keys=True))
+    return 0
+
+
+def cmd_corpus_cut(args) -> int:
+    from .corpus import cut_clip
+
+    res = cut_clip(
+        Path(args.src),
+        Path(args.out),
+        offset_s=args.offset,
+        seconds=args.seconds,
+        scale=args.scale,
+    )
+    print(json.dumps({"file": Path(args.src).name, **res}, sort_keys=True))
     return 0
 
 
@@ -288,13 +456,70 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--sys-root", help="default: a fake sysfs with a healthy rig")
     s.set_defaults(fn=cmd_simulate)
 
-    d = sub.add_parser("digest", help="build a digest from a database")
-    d.add_argument("--db", required=True)
+    c = sub.add_parser("capture", help="record IQ from the RTL-SDR to a file")
+    c.add_argument("--freq", type=_hz, required=True, help="center, e.g. 443.15M")
+    c.add_argument("--rate", type=int, default=2_400_000)
+    c.add_argument("--seconds", type=float, required=True)
+    c.add_argument("--gain", type=float, required=True, help="manual gain in dB")
+    c.add_argument("--format", choices=("cu8", "cf32"), default="cu8")
+    c.add_argument("--device", type=int, default=0)
+    c.add_argument("--out", required=True)
+    c.set_defaults(fn=cmd_capture)
+
+    def iq_args(sp) -> None:
+        sp.add_argument("--iq", required=True, help=".cu8/.raw/.cf32 with a sidecar, or SigMF")
+        sp.add_argument("--offset", type=float, default=0.0, help="seconds into the file")
+        sp.add_argument("--seconds", type=float, help="default: to the end")
+        sp.add_argument("--config")
+
+    t = sub.add_parser("detect", help="find signals in an IQ file (detections JSONL)")
+    iq_args(t)
+    t.add_argument("--hop-s", type=float, default=0.1)
+    t.add_argument("--out", required=True)
+    t.set_defaults(fn=cmd_detect)
+
+    m = sub.add_parser("demod", help="demodulate one channel of an IQ file to a WAV")
+    iq_args(m)
+    m.add_argument("--freq", type=_hz, required=True)
+    m.add_argument("--mode", choices=("nfm", "am"), help="default: the band plan's mode")
+    m.add_argument("--out", required=True)
+    m.set_defaults(fn=cmd_demod)
+
+    g = sub.add_parser("gate", help="classify a WAV as voice, data or noise (segments JSONL)")
+    g.add_argument("--wav", required=True)
+    g.add_argument("--out", required=True)
+    g.set_defaults(fn=cmd_gate)
+
+    x = sub.add_parser("stt", help="transcribe a WAV (transcript JSON)")
+    x.add_argument("--wav", required=True)
+    x.add_argument("--out", required=True)
+    x.add_argument("--config")
+    x.add_argument("--engine", choices=("none", "whisper_cpp", "fake"))
+    x.add_argument("--binary", help="whisper-cli")
+    x.add_argument("--model", help="ggml model file")
+    x.add_argument("--threads", type=int)
+    x.set_defaults(fn=cmd_stt)
+
+    d = sub.add_parser("digest", help="build a digest from a database or a detections file")
+    src = d.add_mutually_exclusive_group(required=True)
+    src.add_argument("--db")
+    src.add_argument("--events", help="detections JSONL from 'sdrscan detect'")
     d.add_argument("--out", required=True)
     d.add_argument("--config")
     d.add_argument("--now", type=float)
+    d.add_argument("--start", type=float, help="epoch of the detections' t_s 0 (--events)")
     d.add_argument("--transcripts", action="store_true")
     d.set_defaults(fn=cmd_digest)
+
+    k = sub.add_parser("corpus", help="tools for a private IQ corpus")
+    ksub = k.add_subparsers(dest="corpus_cmd", required=True)
+    kc = ksub.add_parser("cut", help="slice a short clip out of a large capture")
+    kc.add_argument("--src", required=True)
+    kc.add_argument("--offset", type=float, default=0.0)
+    kc.add_argument("--seconds", type=float, default=2.0)
+    kc.add_argument("--scale", type=float, help="sample gain; default auto for cf32 to cu8")
+    kc.add_argument("--out", required=True, help=".cu8 or .cf32")
+    kc.set_defaults(fn=cmd_corpus_cut)
 
     b = sub.add_parser("dashboard", help="build the static dashboard page")
     b.add_argument("--digest", required=True)

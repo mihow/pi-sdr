@@ -1,6 +1,7 @@
 """Pipeline stages that read one file artifact and write one, so each is testable alone.
 
 Stage    Reads               Writes              Per-block code shared with the scan loop
+capture  a radio             IQ capture          ``IqSource.tune`` and ``read``
 detect   IQ capture          detections JSONL    ``detect.analyze``
 demod    IQ capture + Hz     16 kHz mono WAV     ``dsp.channelizer.Channelizer.push``
 gate     WAV                 segments JSONL      ``voice.gate.VoiceGate.push`` and ``summary``
@@ -28,8 +29,8 @@ from .clock import VirtualClock
 from .config import Config, DetectConfig
 from .detect import HopResult, analyze
 from .dsp.channelizer import Channelizer
-from .iq.base import IqSourceError
-from .iq.file import IqFile
+from .iq.base import IqSource, IqSourceError
+from .iq.file import IqFile, IqWriter
 from .store import Store
 from .voice.gate import Gate, VoiceGate, VoiceState
 from .voice.stt import SttEngine
@@ -64,6 +65,35 @@ def read_jsonl(path: Path, schema: str) -> list[dict]:
             raise ValueError(f"{Path(path).name}:{i}: schema {rec.get('schema')!r}, want {schema}")
         out.append(rec)
     return out
+
+
+# -- capture -------------------------------------------------------------------------------
+def capture(
+    source: IqSource,
+    writer: IqWriter,
+    *,
+    center_hz: int,
+    gain_db: float,
+    seconds: float,
+    block_s: float = HOP_S,
+) -> dict:
+    """Tune once and stream ``seconds`` of IQ into ``writer``; return the source's health.
+
+    The caller closes the writer, so it can add the health figures to the sidecar.
+    """
+    rate = int(writer.meta["rate"])
+    total, n = int(round(seconds * rate)), max(1, int(block_s * rate))
+    source.open()
+    try:
+        source.tune(center_hz, gain_db)
+        while writer.n_samples < total:
+            block = source.read(min(n, total - writer.n_samples))
+            if not len(block):
+                raise IqSourceError("the radio returned no samples")
+            writer.write(block)
+        return source.health()
+    finally:
+        source.close()
 
 
 # -- detect --------------------------------------------------------------------------------
