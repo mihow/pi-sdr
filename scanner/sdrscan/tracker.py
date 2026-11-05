@@ -48,9 +48,10 @@ class Transmission:
     bw_hz: float
     source: str  # "survey" or "dwell" (dwell when any dwell reading saw it)
     voice_ratio: float | None = None
-    cls: str = "unknown"  # voice | data | carrier | unknown
+    cls: str = "unknown"  # voice | keyup | data | carrier | unknown
     clock_ok: bool = True
     clip_id: int | None = None
+    ctcss_hz: float | None = None  # the standard CTCSS tone under it, when one was heard
 
 
 @dataclasses.dataclass

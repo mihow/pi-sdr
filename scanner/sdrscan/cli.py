@@ -70,7 +70,9 @@ def cmd_run(args) -> int:
             svc.ledger,
             cfg.live.bind_address,
             cfg.live.port,
-            digest_fn=svc.make_digest,
+            # The live page is reachable only over the tailnet, so it shows transcripts and
+            # call signs whatever the uplink setting.
+            digest_fn=lambda: svc.make_digest(include_transcripts=True),
             health_fn=_health_fn(svc),
         )
         live.start()

@@ -39,9 +39,9 @@ def store(tmp_path: Path, vclock):
 def test_migrate_creates_every_table_once(store, tmp_path):
     names = {r[0] for r in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert set(TABLES) <= names
-    assert store.meta("schema_version") == str(SCHEMA_VERSION) == "1"
+    assert store.meta("schema_version") == str(SCHEMA_VERSION) == "2"
     store.migrate()
-    assert store.meta("schema_version") == "1"
+    assert store.meta("schema_version") == "2"
     assert store.db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
@@ -135,3 +135,69 @@ def test_add_hop_accumulates_spectrum_and_band_hours(store, vclock):
     row = store.db.execute("SELECT * FROM band_hour").fetchone()
     assert row["band"] == "gmrs_frs_462" and row["peak_count"] == 2
     assert row["floor_med_db"] == pytest.approx(-48.0)
+
+
+V1_TABLES = """
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE transmissions (
+  id INTEGER PRIMARY KEY, hz INTEGER NOT NULL, t_start INTEGER NOT NULL, t_end INTEGER NOT NULL,
+  dur_ms INTEGER, peak_snr_db REAL, med_snr_db REAL, floor_db REAL, bw_hz INTEGER, source TEXT,
+  voice_ratio REAL, class TEXT, clip_id INTEGER, transcript_id INTEGER, clock_ok INTEGER,
+  boot_id TEXT);
+CREATE TABLE rollup_hour (
+  hz INTEGER, hour_ts INTEGER, active_s REAL DEFAULT 0, tx_count INTEGER DEFAULT 0,
+  voice_tx INTEGER DEFAULT 0, voice_s REAL DEFAULT 0, max_snr_db REAL, first_ts INTEGER,
+  last_ts INTEGER, PRIMARY KEY (hz, hour_ts));
+INSERT INTO meta VALUES ('schema_version', '1');
+INSERT INTO transmissions (id, hz, t_start, t_end, dur_ms, class)
+  VALUES (1, 5, 10, 20, 10000, 'voice');
+"""
+
+
+def test_schema_1_database_gains_the_new_columns_and_keeps_its_rows(tmp_path, vclock):
+    path = tmp_path / "old.sqlite"
+    old = sqlite3.connect(path)
+    old.executescript(V1_TABLES)
+    old.close()
+    s = Store.open(path, vclock)
+    s.migrate()
+    assert s.meta("schema_version") == "2"
+    tx = _tx(462_562_500, vclock.now())
+    tx.ctcss_hz = 100.0
+    s.add_tx(tx)
+    s.flush()
+    rows = s.transmissions()
+    assert [r["id"] for r in rows] == [1, 2] and rows[1]["ctcss_hz"] == 100.0
+    cols = {r[1] for r in s.db.execute("PRAGMA table_info(rollup_hour)")}
+    assert "keyup_tx" in cols
+    s.close()
+
+
+def test_call_signs_are_stored_raw_and_totalled_per_channel(store, vclock):
+    t = vclock.now()
+    got = store.add_calls_from_transcript(
+        "kilo seven alpha bravo charlie this is W1AW", 0.9, hz=146_520_000, band="ham_2m", t=t
+    )
+    assert [c.call for c in got] == ["K7ABC", "W1AW"]
+    store.add_calls_from_transcript("K7ABC", 0.9, hz=146_940_000, band="ham_2m", t=t + 60)
+    store.add_calls_from_transcript("K7ABC", 0.3, hz=146_940_000, band="ham_2m", t=t + 90)
+    store.flush()
+    raw = store.db.execute("SELECT call, confidence FROM callsigns ORDER BY id").fetchall()
+    assert [tuple(r) for r in raw][-1] == ("K7ABC", 0.3)  # capped by the transcript's
+    totals = {(r["call"], r["hz"]): r["n"] for r in store.db.execute("SELECT * FROM callsign_hz")}
+    # The 0.3 sighting is kept raw but is too unsure for the totals.
+    assert totals == {("K7ABC", 146_520_000): 1, ("W1AW", 146_520_000): 1,
+                      ("K7ABC", 146_940_000): 1}  # fmt: skip
+
+
+def test_stage_counters_add_up_per_hour(store, vclock):
+    t = vclock.now()
+    store.count("survey_hops", t=t)
+    store.count("survey_hops", 2, t=t + 10)
+    store.count("dwell_s", 0.5, t=t + 3600)
+    tx = _tx(462_562_500, t)
+    tx.cls = "keyup"
+    store.add_tx(tx)
+    assert store.counts(t, t) == {"survey_hops": 3, "keyups": 1}
+    store.count("survey_hops", t=t)  # a later flush adds to the stored hour
+    assert store.counts(t, t + 3600) == {"survey_hops": 4, "keyups": 1, "dwell_s": 0.5}

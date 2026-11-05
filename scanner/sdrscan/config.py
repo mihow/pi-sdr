@@ -55,6 +55,9 @@ class DetectConfig:
     clip_level: float = 0.99
     dwell_open_snr_db: float = 20.0
     hang_s: float = 2.0
+    # A dwell transmission with no voice or data at most this long is a key-up. A repeater
+    # holds its carrier 1 to 3 s after the user unkeys, so this allows for that tail.
+    keyup_max_s: float = 5.0
     always_on_duty: float = 0.80
 
 

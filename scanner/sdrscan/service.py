@@ -6,7 +6,8 @@ clock, so ``sdrscan run`` (real time) and ``sdrscan simulate`` and the end-to-en
 
 - every ``thermal.sample_interval_s``: sample health, store it, ping the watchdog;
 - after each kept voice clip: transcribe it when an engine is configured and the governor
-  allows it (inline in simulations, on a worker thread on the rig);
+  allows it (inline in simulations, on a worker thread on the rig), and store the call
+  signs found in the text;
 - a progress watchdog (``start_watchdog``, real time only): when the scan loop makes no
   progress for 120 s, for example inside a hung USB read, the process exits so systemd
   restarts the container;
@@ -256,7 +257,12 @@ class Service:
         for day in range(int(rolled), today, rollup.DAY):
             rollup.rollup_day(self.store, day)
 
-    def make_digest(self) -> dict:
+    def make_digest(self, include_transcripts: bool | None = None) -> dict:
+        """The digest. Transcripts and call signs go in only with
+        ``uplink.include_transcripts``, because the off-site copy is publicly readable;
+        the live page on the rig passes ``include_transcripts=True``."""
+        if include_transcripts is None:
+            include_transcripts = self.cfg.uplink.include_transcripts
         now = self.clock.now()
         h = self.health.last or self.health.sample()
         digest = build_digest(
@@ -265,7 +271,7 @@ class Service:
             now,
             plan=self.plan,
             site_id=self.cfg.site_id,
-            include_transcripts=self.cfg.uplink.include_transcripts,
+            include_transcripts=include_transcripts,
             now_state=self.runner.now_state(),
             uplink=self._uplink_state(),
         )
@@ -306,7 +312,7 @@ class Service:
             return
         pcm16 = (np.clip(pcm[: int(STT_MAX_S * 16_000)], -1, 1) * 32767).astype(np.int16)
         try:
-            self._stt_q.put_nowait((tx.clip_id, tx_id, pcm16, tx.t_end))
+            self._stt_q.put_nowait((tx.clip_id, tx_id, pcm16, tx.hz, tx.band))
         except queue.Full:
             log.info("speech-to-text queue full; clip %s keeps no transcript", tx.clip_id)
             return
@@ -315,12 +321,16 @@ class Service:
             self._stt_thread.start()
 
     def _transcribe(self, item) -> None:
-        clip_id, tx_id, pcm16, t_end = item
+        clip_id, tx_id, pcm16, hz, band = item
         tr = self._stt().transcribe(pcm16.astype(np.float32) / 32767)
         if tr is None:
             return
-        self.store.add_transcript(
-            clip_id, tx_id, tr.engine, tr.text, tr.confidence, tr.rtf, self.clock.now()
+        now = self.clock.now()
+        tid = self.store.add_transcript(
+            clip_id, tx_id, tr.engine, tr.text, tr.confidence, tr.rtf, now
+        )
+        self.store.add_calls_from_transcript(
+            tr.text, tr.confidence, hz=hz, band=band, t=now, tx_id=tx_id, transcript_id=tid
         )
         self.clips.set_tier(clip_id, {"class": "voice", "confidence": tr.confidence})
 

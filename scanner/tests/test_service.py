@@ -220,7 +220,7 @@ def test_speech_to_text_runs_at_nice_19_on_the_rig(tmp_path, vclock, sys_root):
 
     svc = _service(_plain_cfg(tmp_path), vclock, sys_root, stt=Probe())
     before = os.getpriority(os.PRIO_PROCESS, 0)
-    svc._on_tx(1, types.SimpleNamespace(clip_id=1, t_end=vclock.now()), np.zeros(16_000))
+    svc._on_tx(1, types.SimpleNamespace(clip_id=1, hz=146_520_000, band="ham_2m"), np.zeros(16_000))
     assert done.wait(10)
     assert seen == [19]
     assert os.getpriority(os.PRIO_PROCESS, 0) == before

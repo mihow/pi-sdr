@@ -57,6 +57,7 @@ def _hours(store: Store) -> list[tuple]:
             r["max_snr_db"],
             r["first_ts"],
             r["last_ts"],
+            r["keyup_tx"],
         )
         for r in store.db.execute("SELECT * FROM rollup_hour ORDER BY hz, hour_ts")
     ]
@@ -64,8 +65,10 @@ def _hours(store: Store) -> list[tuple]:
 
 def test_incremental_and_recompute_agree(store):
     for i in range(40):
-        _add(store, _tx(A if i % 3 else B, T0 + i * 211.7, dur=13.3 + i % 5, cls="voice"))
+        cls = "keyup" if i % 4 == 0 else "voice"
+        _add(store, _tx(A if i % 3 else B, T0 + i * 211.7, dur=13.3 + i % 5, cls=cls))
     before = _hours(store)
+    assert sum(row[-1] for row in before) == 10
     for h in {row[1] for row in before}:
         rollup.recompute_hour(store, h)
     assert _hours(store) == before
@@ -166,3 +169,18 @@ def test_profiles_track_hour_of_week(store):
     store.flush()
     again = store.db.execute("SELECT n FROM profile_how WHERE hz = ? AND how = 3", (A,)).fetchone()
     assert again["n"] == 3
+
+
+def test_key_ups_are_counted_in_every_window(store, vclock):
+    for d in range(3):
+        _add(store, _tx(B, T0 + d * DAY + 600, dur=1.2, cls="keyup"))
+        _add(store, _tx(B, T0 + d * DAY + 900, dur=8.0, cls="voice"))
+    for d in range(2):
+        rollup.rollup_day(store, int(T0 + d * DAY))
+    now = T0 + 2 * DAY + 1800
+    vclock.set(now)
+    want = {"hour": 1, "day": 1, "week": 3, "all": 3}
+    for w, n in want.items():
+        c = rollup.query_window(store, w, now).channels[B]
+        assert (c.keyup_tx, c.voice_tx) == (n, n), w
+        assert c.tx_count == 2 * n, w

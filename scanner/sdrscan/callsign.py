@@ -44,7 +44,8 @@ FORMATS = {
 }
 BLOCKLIST = frozenset({"N2O", "W3C", "K9S"})
 AVIATION_BANDS = frozenset({"airband"})
-MIN_CONFIDENCE = 0.4
+MIN_CONFIDENCE = 0.4  # weaker matches are not returned at all
+SHOW_CONFIDENCE = 0.6  # stored calls below this are kept but not summarized
 
 # Confidence by how the call was written. "written": one token that is the whole call.
 _BASE = {"written": 0.9, "spoken": 0.8, "mixed": 0.7, "loose": 0.55}

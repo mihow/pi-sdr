@@ -1,8 +1,11 @@
 """SQLite event store (WAL) with batched writes.
 
 Frequencies are INTEGER Hz and times INTEGER unix seconds. Raw rows (transmissions, health,
-transcripts) are kept 90 days; hourly aggregates 400 days; day rollups, per-channel totals
-and hour-of-week profiles forever, so week and all-time views survive pruning. Writes
+transcripts, call signs) are kept 90 days; hourly aggregates and stage counters 400 days;
+day rollups, per-channel totals, per-channel call-sign totals and hour-of-week profiles
+forever, so week and all-time views survive pruning. ``count`` adds to an hourly counter
+per pipeline stage (survey hops, peaks, tracks opened, clips, transcripts and so on), so
+the dashboard can show what every stage did, not only what reached the busiest list. Writes
 are queued in memory and committed every ``batch_s`` seconds or on ``flush()``, which keeps
 SD card writes few and large.
 """
@@ -18,11 +21,12 @@ from pathlib import Path
 
 import numpy as np
 
+from . import callsign
 from .clock import Clock
 from .detect import HopResult
 from .tracker import Transmission
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SPECTRUM_LO_MHZ = 24
 SPECTRUM_BINS = 1742  # 1 MHz bins from 24 MHz to 1766 MHz
 DAY_S = 86400
@@ -37,7 +41,7 @@ CREATE TABLE IF NOT EXISTS transmissions (
   id INTEGER PRIMARY KEY, hz INTEGER NOT NULL, t_start INTEGER NOT NULL, t_end INTEGER NOT NULL,
   dur_ms INTEGER, peak_snr_db REAL, med_snr_db REAL, floor_db REAL, bw_hz INTEGER, source TEXT,
   voice_ratio REAL, class TEXT, clip_id INTEGER, transcript_id INTEGER, clock_ok INTEGER,
-  boot_id TEXT);
+  boot_id TEXT, ctcss_hz REAL);
 CREATE INDEX IF NOT EXISTS transmissions_t ON transmissions (t_start);
 CREATE INDEX IF NOT EXISTS transmissions_hz ON transmissions (hz, t_start);
 CREATE TABLE IF NOT EXISTS clips (
@@ -49,7 +53,7 @@ CREATE TABLE IF NOT EXISTS transcripts (
 CREATE TABLE IF NOT EXISTS rollup_hour (
   hz INTEGER, hour_ts INTEGER, active_s REAL DEFAULT 0, tx_count INTEGER DEFAULT 0,
   voice_tx INTEGER DEFAULT 0, voice_s REAL DEFAULT 0, max_snr_db REAL, first_ts INTEGER,
-  last_ts INTEGER, PRIMARY KEY (hz, hour_ts));
+  last_ts INTEGER, keyup_tx INTEGER DEFAULT 0, PRIMARY KEY (hz, hour_ts));
 CREATE TABLE IF NOT EXISTS band_hour (
   band TEXT, hour_ts INTEGER, occupancy_pct REAL, peak_count INTEGER, floor_med_db REAL,
   coverage_pct REAL, PRIMARY KEY (band, hour_ts));
@@ -57,22 +61,39 @@ CREATE TABLE IF NOT EXISTS spectrum_hour (hour_ts INTEGER PRIMARY KEY, bins BLOB
 CREATE TABLE IF NOT EXISTS rollup_day (
   hz INTEGER, day_ts INTEGER, active_s REAL DEFAULT 0, tx_count INTEGER DEFAULT 0,
   voice_tx INTEGER DEFAULT 0, voice_s REAL DEFAULT 0, max_snr_db REAL,
-  active_hours INTEGER DEFAULT 0, PRIMARY KEY (hz, day_ts));
+  active_hours INTEGER DEFAULT 0, keyup_tx INTEGER DEFAULT 0, PRIMARY KEY (hz, day_ts));
 CREATE TABLE IF NOT EXISTS profile_how (
   hz INTEGER, how INTEGER, ema_active_s REAL, ema_var REAL DEFAULT 0, n INTEGER DEFAULT 0,
   PRIMARY KEY (hz, how));
 CREATE TABLE IF NOT EXISTS channel_total (
   hz INTEGER PRIMARY KEY, active_s REAL DEFAULT 0, tx_count INTEGER DEFAULT 0,
-  voice_tx INTEGER DEFAULT 0, hours_seen INTEGER DEFAULT 0);
+  voice_tx INTEGER DEFAULT 0, hours_seen INTEGER DEFAULT 0, keyup_tx INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS health (
   ts INTEGER PRIMARY KEY, temp_c REAL, throttled INTEGER, disk_free_mb REAL, quota_used_mb REAL,
   dongle_ok INTEGER, drops INTEGER, clip_frac REAL, mode TEXT, clock_ok INTEGER);
 CREATE TABLE IF NOT EXISTS uplink_log (
   ts INTEGER, target TEXT, bytes_out INTEGER, bytes_in INTEGER, status INTEGER);
+CREATE TABLE IF NOT EXISTS callsigns (
+  id INTEGER PRIMARY KEY, call TEXT NOT NULL, kind TEXT, hz INTEGER, t INTEGER,
+  tx_id INTEGER, transcript_id INTEGER, confidence REAL);
+CREATE INDEX IF NOT EXISTS callsigns_t ON callsigns (t);
+CREATE TABLE IF NOT EXISTS callsign_hz (
+  call TEXT, hz INTEGER, kind TEXT, n INTEGER DEFAULT 0, first_ts INTEGER, last_ts INTEGER,
+  PRIMARY KEY (call, hz));
+CREATE TABLE IF NOT EXISTS stage_hour (
+  hour_ts INTEGER, stage TEXT, n REAL DEFAULT 0, PRIMARY KEY (hour_ts, stage));
 """
+# Columns added after schema 1. ``migrate`` adds any that an older database lacks.
+_ADDED_COLUMNS = (
+    ("transmissions", "ctcss_hz", "REAL"),
+    ("rollup_hour", "keyup_tx", "INTEGER DEFAULT 0"),
+    ("rollup_day", "keyup_tx", "INTEGER DEFAULT 0"),
+    ("channel_total", "keyup_tx", "INTEGER DEFAULT 0"),
+)
 TABLES = (
     "meta", "channels", "transmissions", "clips", "transcripts", "rollup_hour", "band_hour",
     "spectrum_hour", "rollup_day", "profile_how", "channel_total", "health", "uplink_log",
+    "callsigns", "callsign_hz", "stage_hour",
 )  # fmt: skip
 _HEALTH_COLS = (
     "ts", "temp_c", "throttled", "disk_free_mb", "quota_used_mb", "dongle_ok", "drops",
@@ -105,6 +126,7 @@ class Store:
         self._last_flush = clock.monotonic()
         self._next_id: dict[str, int] = {}
         self._hours: dict[int, _HourAcc] = {}
+        self._counts: dict[tuple[int, str], float] = {}
         # The live server's threads charge the ledger while the scan loop writes.
         self.lock = threading.RLock()
 
@@ -125,16 +147,23 @@ class Store:
 
     # -- schema ------------------------------------------------------------------------
     def migrate(self) -> None:
-        self.db.executescript(_SCHEMA)
-        current = self.meta("schema_version")
-        if current is None:
-            self.set_meta("schema_version", str(SCHEMA_VERSION))
-        elif int(current) > SCHEMA_VERSION:
+        current = self.meta("schema_version") if self._has_table("meta") else None
+        if current is not None and int(current) > SCHEMA_VERSION:
             raise RuntimeError(f"database schema {current} is newer than this build")
+        self.db.executescript(_SCHEMA)
+        for table, col, decl in _ADDED_COLUMNS:
+            have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
+            if col not in have:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        self.set_meta("schema_version", str(SCHEMA_VERSION))
         self.db.commit()
-        for table in ("transmissions", "clips", "transcripts"):
+        for table in ("transmissions", "clips", "transcripts", "callsigns"):
             row = self.db.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()
             self._next_id[table] = int(row[0]) + 1
+
+    def _has_table(self, name: str) -> bool:
+        sql = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?"
+        return self.db.execute(sql, (name,)).fetchone() is not None
 
     def meta(self, key: str) -> str | None:
         row = self.db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
@@ -165,13 +194,15 @@ class Store:
         self._queue(
             "INSERT INTO transmissions (id, hz, t_start, t_end, dur_ms, peak_snr_db, med_snr_db,"
             " floor_db, bw_hz, source, voice_ratio, class, clip_id, transcript_id, clock_ok,"
-            " boot_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " boot_id, ctcss_hz) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 tx_id, int(tx.hz), t0, t1, int(tx.dur_ms), tx.peak_snr_db, tx.med_snr_db,
                 tx.floor_db, int(tx.bw_hz), tx.source, tx.voice_ratio, tx.cls, tx.clip_id, None,
-                int(tx.clock_ok), self.boot_id,
+                int(tx.clock_ok), self.boot_id, tx.ctcss_hz,
             ),
         )  # fmt: skip
+        if tx.cls in ("voice", "keyup"):
+            self.count("voice" if tx.cls == "voice" else "keyups", t=tx.t_end)
         self._queue(
             "INSERT INTO channels (hz, band, mode, bw_hz, name, first_seen, last_seen)"
             " VALUES (?,?,?,?,?,?,?) ON CONFLICT(hz) DO UPDATE SET"
@@ -231,12 +262,14 @@ class Store:
                 sha256,
             ),
         )
+        self.count("clips", t=t_start)
         return clip_id
 
     def evict_clip(self, clip_id: int, t: float) -> None:
         self._queue(
             "UPDATE clips SET path = NULL, evicted_at = ? WHERE id = ?", (int(t), int(clip_id))
         )
+        self.count("evicted", t=t)
 
     def update_clip_tier(self, clip_id: int, tier: int) -> None:
         self._queue("UPDATE clips SET tier = ? WHERE id = ?", (int(tier), int(clip_id)))
@@ -261,7 +294,82 @@ class Store:
             self._queue(
                 "UPDATE transmissions SET transcript_id = ? WHERE id = ?", (tid, int(tx_id))
             )
+        self.count("transcripts", t=created)
         return tid
+
+    def add_callsign(
+        self,
+        call: str,
+        kind: str,
+        *,
+        hz: int,
+        t: float,
+        confidence: float,
+        tx_id: int | None = None,
+        transcript_id: int | None = None,
+    ) -> int:
+        """Store one heard call sign. Calls sure enough to show also go on the permanent
+        per-channel totals (``callsign_hz``), which the all-time view reads."""
+        cid = self._new_id("callsigns")
+        ts = int(round(t))
+        self._queue(
+            "INSERT INTO callsigns (id, call, kind, hz, t, tx_id, transcript_id, confidence)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (cid, call, kind, int(hz), ts, tx_id, transcript_id, round(float(confidence), 2)),
+        )
+        if confidence >= callsign.SHOW_CONFIDENCE:
+            self._queue(
+                "INSERT INTO callsign_hz (call, hz, kind, n, first_ts, last_ts)"
+                " VALUES (?,?,?,1,?,?) ON CONFLICT(call, hz) DO UPDATE SET n = n + 1,"
+                " first_ts = MIN(first_ts, excluded.first_ts),"
+                " last_ts = MAX(last_ts, excluded.last_ts)",
+                (call, int(hz), kind, ts, ts),
+            )
+        self.count("callsigns", t=t)
+        return cid
+
+    def add_calls_from_transcript(
+        self,
+        text: str,
+        transcript_confidence: float,
+        *,
+        hz: int,
+        band: str | None,
+        t: float,
+        tx_id: int | None = None,
+        transcript_id: int | None = None,
+    ) -> list[callsign.Callsign]:
+        """Extract and store the call signs of one transcript. A call is no surer than the
+        transcript it came from, so its stored confidence is the lower of the two."""
+        calls = callsign.extract(text, band=band)
+        for c in calls:
+            self.add_callsign(
+                c.call,
+                c.kind,
+                hz=hz,
+                t=t,
+                confidence=min(c.confidence, float(transcript_confidence)),
+                tx_id=tx_id,
+                transcript_id=transcript_id,
+            )
+        return calls
+
+    def count(self, stage: str, n: float = 1, t: float | None = None) -> None:
+        """Add ``n`` to this hour's counter for a pipeline stage (written on flush)."""
+        hour = int((t if t is not None else self.clock.now()) // 3600 * 3600)
+        with self.lock:
+            key = (hour, stage)
+            self._counts[key] = self._counts.get(key, 0) + n
+
+    def counts(self, t0: float, t1: float) -> dict[str, float]:
+        """Stage counters summed over the hours from ``t0`` to ``t1``, both included."""
+        self.flush()
+        rows = self.db.execute(
+            "SELECT stage, SUM(n) FROM stage_hour WHERE hour_ts >= ? AND hour_ts <= ?"
+            " GROUP BY stage",
+            (int(t0 // 3600 * 3600), int(t1 // 3600 * 3600)),
+        )
+        return {r[0]: r[1] for r in rows}
 
     def add_health(self, h: dict) -> None:
         row = tuple(h.get(c) for c in _HEALTH_COLS)
@@ -335,11 +443,17 @@ class Store:
     def flush(self) -> None:
         with self.lock:
             pending, self._pending = self._pending, []
+            counts, self._counts = self._counts, {}
             with self.db:
                 # Hour rows first, so a queued coverage update finds its rows.
                 self._write_hours()
                 for sql, params in pending:
                     self.db.execute(sql, params)
+                self.db.executemany(
+                    "INSERT INTO stage_hour (hour_ts, stage, n) VALUES (?,?,?)"
+                    " ON CONFLICT(hour_ts, stage) DO UPDATE SET n = n + excluded.n",
+                    [(h, stage, n) for (h, stage), n in sorted(counts.items())],
+                )
             self._last_flush = self.clock.monotonic()
 
     def prune(self, now: float) -> None:
@@ -351,11 +465,13 @@ class Store:
             self.db.execute("DELETE FROM transmissions WHERE t_start < ?", (raw,))
             self.db.execute("DELETE FROM health WHERE ts < ?", (raw,))
             self.db.execute("DELETE FROM transcripts WHERE created < ?", (raw,))
+            self.db.execute("DELETE FROM callsigns WHERE t < ?", (raw,))
             for table, col in (
                 ("rollup_hour", "hour_ts"),
                 ("band_hour", "hour_ts"),
                 ("spectrum_hour", "hour_ts"),
                 ("uplink_log", "ts"),
+                ("stage_hour", "hour_ts"),
             ):
                 self.db.execute(f"DELETE FROM {table} WHERE {col} < ?", (agg,))
 

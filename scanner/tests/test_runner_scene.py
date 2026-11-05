@@ -71,6 +71,10 @@ def test_six_hour_scene_finds_every_burst_and_no_carriers(tmp_path, vclock):
         "SELECT MIN(coverage_pct) FROM band_hour WHERE coverage_pct IS NOT NULL"
     ).fetchone()[0]
     assert cov is not None and cov >= 80
+    counts = store.counts(end - 6 * 3600, end)
+    n_tx = len(store.transmissions())
+    assert counts["survey_hops"] > 1000 and counts["peaks"] > counts["survey_hops"] * 0.1
+    assert counts["opened"] >= n_tx and counts["dwell_s"] > 0
 
 
 @pytest.mark.slow

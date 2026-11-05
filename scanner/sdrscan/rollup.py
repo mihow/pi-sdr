@@ -36,8 +36,10 @@ class ChanStats:
     voice_s: float = 0.0
     max_snr_db: float | None = None
     last_ts: int | None = None
+    keyup_tx: int = 0
 
-    def add(self, active_s, tx_count, voice_tx, voice_s, max_snr, last_ts=None) -> None:
+    def add(self, active_s, tx_count, voice_tx, voice_s, max_snr, last_ts=None, keyup_tx=0):
+        self.keyup_tx += keyup_tx or 0
         self.active_s += active_s or 0.0
         self.tx_count += tx_count or 0
         self.voice_tx += voice_tx or 0
@@ -87,6 +89,8 @@ def _split(t_start: int, dur_ms: int) -> list[tuple[int, int, int, int]]:
 
 
 def _tx_parts(t_start: int, dur_ms: int, cls: str | None, snr: float | None):
+    """Per hour touched: (hour, active s, tx, voice tx, voice s, key-ups, (snr, first, last)).
+    A transmission counts once, in the hour it starts."""
     voice = cls == "voice"
     for i, (h, ms, first, last) in enumerate(_split(t_start, dur_ms)):
         yield (
@@ -95,19 +99,18 @@ def _tx_parts(t_start: int, dur_ms: int, cls: str | None, snr: float | None):
             int(i == 0),
             int(voice and i == 0),
             (ms / 1000 if voice else 0.0),
-            (
-                snr,
-                first,
-                last,
-            ),
+            int(cls == "keyup" and i == 0),
+            (snr, first, last),
         )
 
 
 _UPSERT_HOUR = (
-    "INSERT INTO rollup_hour (hz, hour_ts, active_s, tx_count, voice_tx, voice_s, max_snr_db,"
-    " first_ts, last_ts) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(hz, hour_ts) DO UPDATE SET"
+    "INSERT INTO rollup_hour (hz, hour_ts, active_s, tx_count, voice_tx, voice_s, keyup_tx,"
+    " max_snr_db, first_ts, last_ts) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    " ON CONFLICT(hz, hour_ts) DO UPDATE SET"
     " active_s = active_s + excluded.active_s, tx_count = tx_count + excluded.tx_count,"
     " voice_tx = voice_tx + excluded.voice_tx, voice_s = voice_s + excluded.voice_s,"
+    " keyup_tx = keyup_tx + excluded.keyup_tx,"
     " max_snr_db = MAX(COALESCE(max_snr_db, excluded.max_snr_db), excluded.max_snr_db),"
     " first_ts = MIN(first_ts, excluded.first_ts), last_ts = MAX(last_ts, excluded.last_ts)"
 )
@@ -116,10 +119,10 @@ _UPSERT_HOUR = (
 def on_tx_closed(store: Store, tx: Transmission) -> None:
     """Add a just-stored transmission to its hours (queued with the store's batch)."""
     t0 = int(round(tx.t_start))
-    for h, active, n, v, vs, (snr, first, last) in _tx_parts(
+    for h, active, n, v, vs, k, (snr, first, last) in _tx_parts(
         t0, int(tx.dur_ms), tx.cls, tx.peak_snr_db
     ):
-        store.defer(_UPSERT_HOUR, (int(tx.hz), h, active, n, v, vs, snr, first, last))
+        store.defer(_UPSERT_HOUR, (int(tx.hz), h, active, n, v, vs, k, snr, first, last))
 
 
 def recompute_hour(store: Store, hour_ts: int) -> None:
@@ -133,12 +136,12 @@ def recompute_hour(store: Store, hour_ts: int) -> None:
     ).fetchall()
     acc: dict[int, list] = {}
     for r in rows:
-        for h, active_s, n, v, vs, (snr, first, last) in _tx_parts(
+        for h, active_s, n, v, vs, k, (snr, first, last) in _tx_parts(
             r["t_start"], r["dur_ms"], r["class"], r["peak_snr_db"]
         ):
             if h != hour_ts:
                 continue
-            a = acc.setdefault(r["hz"], [0, 0, 0, 0, None, first, last])
+            a = acc.setdefault(r["hz"], [0, 0, 0, 0, None, first, last, 0])
             a[0] += round(active_s * 1000)
             a[1] += n
             a[2] += v
@@ -147,13 +150,14 @@ def recompute_hour(store: Store, hour_ts: int) -> None:
                 a[4] = snr if a[4] is None else max(a[4], snr)
             a[5] = min(a[5], first)
             a[6] = max(a[6], last)
+            a[7] += k
     with store.db:
         store.db.execute("DELETE FROM rollup_hour WHERE hour_ts = ?", (hour_ts,))
         store.db.executemany(
             "INSERT INTO rollup_hour (hz, hour_ts, active_s, tx_count, voice_tx, voice_s,"
-            " max_snr_db, first_ts, last_ts) VALUES (?,?,?,?,?,?,?,?,?)",
+            " keyup_tx, max_snr_db, first_ts, last_ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
             [
-                (hz, hour_ts, a[0] / 1000, a[1], a[2], a[3] / 1000, a[4], a[5], a[6])
+                (hz, hour_ts, a[0] / 1000, a[1], a[2], a[3] / 1000, a[7], a[4], a[5], a[6])
                 for hz, a in sorted(acc.items())
             ],
         )
@@ -167,16 +171,16 @@ def rollup_day(store: Store, day_ts: int) -> None:
         store.db.execute("DELETE FROM rollup_day WHERE day_ts = ?", (day_ts,))
         store.db.execute(
             "INSERT INTO rollup_day (hz, day_ts, active_s, tx_count, voice_tx, voice_s,"
-            " max_snr_db, active_hours) SELECT hz, ?, SUM(active_s), SUM(tx_count),"
-            " SUM(voice_tx), SUM(voice_s), MAX(max_snr_db), COUNT(*) FROM rollup_hour"
-            " WHERE hour_ts >= ? AND hour_ts < ? GROUP BY hz",
+            " max_snr_db, active_hours, keyup_tx) SELECT hz, ?, SUM(active_s), SUM(tx_count),"
+            " SUM(voice_tx), SUM(voice_s), MAX(max_snr_db), COUNT(*), SUM(keyup_tx)"
+            " FROM rollup_hour WHERE hour_ts >= ? AND hour_ts < ? GROUP BY hz",
             (day_ts, day_ts, day_ts + DAY),
         )
         store.db.execute("DELETE FROM channel_total")
         store.db.execute(
-            "INSERT INTO channel_total (hz, active_s, tx_count, voice_tx, hours_seen)"
-            " SELECT hz, SUM(active_s), SUM(tx_count), SUM(voice_tx), SUM(active_hours)"
-            " FROM rollup_day GROUP BY hz"
+            "INSERT INTO channel_total (hz, active_s, tx_count, voice_tx, hours_seen, keyup_tx)"
+            " SELECT hz, SUM(active_s), SUM(tx_count), SUM(voice_tx), SUM(active_hours),"
+            " SUM(keyup_tx) FROM rollup_day GROUP BY hz"
         )
         store.set_meta("rolled_through", str(day_ts + DAY))
 
@@ -283,6 +287,7 @@ def _hour_window(store: Store, now: float) -> WindowStats:
             active if voice else 0.0,
             r["peak_snr_db"],
             r["t_end"],
+            int(r["class"] == "keyup" and counted),
         )
         cells = series.setdefault(r["hz"], [0] * 12)
         for i in range(12):
@@ -309,6 +314,7 @@ def _day_window(store: Store, now: float) -> WindowStats:
             r["voice_s"],
             r["max_snr_db"],
             r["last_ts"],
+            r["keyup_tx"],
         )
         cells = series.setdefault(r["hz"], [0] * 24)
         cells[(r["hour_ts"] - first) // H] += int(round(r["active_s"]))
@@ -319,10 +325,13 @@ def _today_hours(store: Store, now: float, chans: dict[int, ChanStats]) -> dict[
     today: dict[int, float] = {}
     for r in store.db.execute(
         "SELECT hz, SUM(active_s) a, SUM(tx_count) n, SUM(voice_tx) v, SUM(voice_s) vs,"
-        " MAX(max_snr_db) m, MAX(last_ts) l FROM rollup_hour WHERE hour_ts >= ? GROUP BY hz",
+        " MAX(max_snr_db) m, MAX(last_ts) l, SUM(keyup_tx) k FROM rollup_hour"
+        " WHERE hour_ts >= ? GROUP BY hz",
         (day_of(now),),
     ):
-        chans.setdefault(r["hz"], ChanStats()).add(r["a"], r["n"], r["v"], r["vs"], r["m"], r["l"])
+        chans.setdefault(r["hz"], ChanStats()).add(
+            r["a"], r["n"], r["v"], r["vs"], r["m"], r["l"], r["k"]
+        )
         today[r["hz"]] = r["a"]
     return today
 
@@ -336,7 +345,12 @@ def _week_window(store: Store, now: float) -> WindowStats:
         "SELECT * FROM rollup_day WHERE day_ts >= ? AND day_ts < ?", (first, today)
     ):
         chans.setdefault(r["hz"], ChanStats()).add(
-            r["active_s"], r["tx_count"], r["voice_tx"], r["voice_s"], r["max_snr_db"]
+            r["active_s"],
+            r["tx_count"],
+            r["voice_tx"],
+            r["voice_s"],
+            r["max_snr_db"],
+            keyup_tx=r["keyup_tx"],
         )
         series.setdefault(r["hz"], [0] * 8)[(r["day_ts"] - first) // DAY] += int(
             round(r["active_s"])
@@ -350,14 +364,16 @@ def _all_window(store: Store, now: float) -> WindowStats:
     chans: dict[int, ChanStats] = {}
     for r in store.db.execute("SELECT * FROM channel_total"):
         chans.setdefault(r["hz"], ChanStats()).add(
-            r["active_s"], r["tx_count"], r["voice_tx"], 0.0, None
+            r["active_s"], r["tx_count"], r["voice_tx"], 0.0, None, keyup_tx=r["keyup_tx"]
         )
     rolled = int(store.meta("rolled_through") or 0)
     for r in store.db.execute(
-        "SELECT hz, SUM(active_s) a, SUM(tx_count) n, SUM(voice_tx) v, MAX(last_ts) l"
-        " FROM rollup_hour WHERE hour_ts >= ? GROUP BY hz",
+        "SELECT hz, SUM(active_s) a, SUM(tx_count) n, SUM(voice_tx) v, MAX(last_ts) l,"
+        " SUM(keyup_tx) k FROM rollup_hour WHERE hour_ts >= ? GROUP BY hz",
         (max(rolled, day_of(now)),),
     ):
-        chans.setdefault(r["hz"], ChanStats()).add(r["a"], r["n"], r["v"], 0.0, None, r["l"])
+        chans.setdefault(r["hz"], ChanStats()).add(
+            r["a"], r["n"], r["v"], 0.0, None, r["l"], r["k"]
+        )
     first = store.db.execute("SELECT MIN(first_seen) FROM channels").fetchone()[0]
     return WindowStats("all", float(first or now), now, chans, {}, 0)

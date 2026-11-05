@@ -2,9 +2,13 @@
 
 ``Runner.step`` runs one scheduler job. During a dwell, each voice-capable channel's audio
 goes to its voice gate and to a clip writer. When the track closes, the gate's verdict
-becomes the transmission's class; a voice transmission of at least ``min_clip_s`` keeps its
-clip, anything else is discarded. The closed transmission then goes to the store and its
-hour rollup, and to ``on_tx`` (the service queues speech-to-text there).
+becomes the transmission's class (``tx_class``): voice, data, or, for a short carrier with
+neither, a key-up. The gate's CTCSS tone goes on the row whatever the class. A voice
+transmission of at least ``min_clip_s`` keeps its clip, anything else is discarded. The
+closed transmission then goes to the store and its hour rollup, and to ``on_tx`` (the
+service queues speech-to-text there). Each stage adds to the store's hourly counters
+(survey hops, peaks, tracks opened, dwell seconds), so the dashboard shows the activity of
+every stage.
 
 ``spectrum`` picks how the detector sees the band. ``iq`` renders and analyzes real IQ for
 everything. ``psd`` asks a source that offers ``read_psd`` (the synthetic source) for the
@@ -43,6 +47,19 @@ SPUR_MARKS_KEY = "spur_marks"
 
 
 NOW_S = 300.0
+
+
+def tx_class(summary: dict, dur_ms: int, keyup_max_s: float) -> str:
+    """The class of a transmission whose audio went through a gate.
+
+    The tracker opens a transmission only on RF power, so there was a carrier. Without
+    voice or data in its audio, a short one is a key-up: a user or a repeater keying up
+    (often with a CTCSS tone), a kerchunk, or a squelch tail.
+    """
+    cls = summary.get("class", "unknown")
+    if cls in ("voice", "data"):
+        return cls
+    return "keyup" if dur_ms <= keyup_max_s * 1000 else cls
 
 
 class DongleLost(RuntimeError):
@@ -180,6 +197,7 @@ class Runner:
         if job.kind == SURVEY:
             r = self._measure(job.center_hz, int(job.duration_s * self.rate))
             self.ingest_hop(r, "survey")
+            self.store.count("survey_hops")
         elif job.kind == CALIBRATE:
             r = self._measure(job.center_hz, int(job.duration_s * self.rate))
             t = self.clock.now()
@@ -205,6 +223,8 @@ class Runner:
         or "dwell". The scan loop and ``sdrscan digest --events`` both feed hops here."""
         t = self.clock.now()
         self.status["last_clip_frac"] = r.clip_frac
+        if r.peaks:
+            self.store.count("peaks", len(r.peaks), t=t)
         self.spurs.update(r, t)
         peaks = []
         for p in r.peaks:
@@ -235,6 +255,7 @@ class Runner:
                 if self._channelizer is not None and voice:
                     self._audio(self._channelizer.push(iq))
             self.ingest_hop(r, "dwell")
+        self.store.count("dwell_s", blocks * block_s)
 
     def _audio(self, chunks: dict[int, np.ndarray]) -> None:
         """Feed each active channel's audio to its gate and, while it may be voice, a clip."""
@@ -275,7 +296,8 @@ class Runner:
         if gate is not None:
             summary = gate.summary()
             tx.voice_ratio = summary.get("voice_ratio")
-            tx.cls = summary.get("class", "unknown")
+            tx.cls = tx_class(summary, tx.dur_ms, self.cfg.detect.keyup_max_s)
+            tx.ctcss_hz = summary.get("ctcss_hz")
             gate.reset()
         clip_id = None
         pcm = None
@@ -298,7 +320,9 @@ class Runner:
 
     def _handle(self, events: list[TrackEvent]) -> None:
         for ev in events:
-            if ev.kind == "closed" and ev.tx is not None:
+            if ev.kind == "opened":
+                self.store.count("opened", t=ev.t)
+            elif ev.kind == "closed" and ev.tx is not None:
                 self._close_tx(ev.tx)
             elif ev.kind in ("always_on", "always_off"):
                 band = self.plan.band_for(ev.hz).id

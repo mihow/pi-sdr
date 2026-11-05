@@ -34,6 +34,7 @@ detect:
   clip_level: 0.99
   dwell_open_snr_db: 20.0
   hang_s: 2.0
+  keyup_max_s: 5.0            # a dwell carrier this short with no voice or data is a key-up
   always_on_duty: 0.80
 
 quota:
