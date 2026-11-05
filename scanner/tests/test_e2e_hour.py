@@ -77,7 +77,7 @@ def test_compressed_hour_end_to_end(tmp_path, vclock, sys_root):
         statvfs=FakeFs(0.5),
         sys_root=sys_root,
         inline_stt=True,
-        stt=FakeStt(["unit two on scene", "copy, en route"]),
+        stt=FakeStt(["WRAB123 unit two on scene", "copy, en route"]),
     )
     page_bytes = svc.ledger.month_bytes()  # the one-time dashboard page upload
     svc.run(until=START + H + 60)
@@ -99,10 +99,15 @@ def test_compressed_hour_end_to_end(tmp_path, vclock, sys_root):
     assert len(clips) == 4
     transcripts = store.db.execute("SELECT * FROM transcripts").fetchall()
     assert len(transcripts) == 4 and {r["text"] for r in transcripts} == {
-        "unit two on scene",
+        "WRAB123 unit two on scene",
         "copy, en route",
     }
     assert all(t["transcript_id"] is not None for t in by_hz[GMRS] + by_hz[AIR])
+    # The call sign in a transcript is stored with its channel and transmission.
+    calls = [dict(r) for r in store.db.execute("SELECT * FROM callsigns")]
+    assert calls and {c["call"] for c in calls} == {"WRAB123"}
+    tx_by_id = {t["id"]: t for t in store.transmissions()}
+    assert all(tx_by_id[c["tx_id"]]["hz"] == c["hz"] for c in calls)
 
     # The clip store stayed under its quota by evicting the oldest clips first.
     assert svc.clips.used_bytes() <= cfg.quota.clip_quota_bytes
@@ -139,6 +144,10 @@ def test_compressed_hour_end_to_end(tmp_path, vclock, sys_root):
     d = json.loads(gzip.decompress(gz))
     assert d["windows"]["day"]["top"][0]["hz"] == GMRS
     assert {t["hz"] for t in d["transcripts"]} <= {GMRS, AIR}
+    assert "WRAB123" in {c["call"] for c in d["windows"]["day"]["calls"]}
+    stage = d["windows"]["day"]["pipeline"]
+    assert stage["survey_hops"] > 0 and stage["opened"] >= 5 and stage["dwell_s"] > 0
+    assert stage["transcripts"] == 4 and stage["clips"] == 4 and stage["evicted"] >= 1
     assert d["health"]["dongle"] is True and d["health"]["uplink"]["state"] == "ok"
     pushed = svc.ledger.month_bytes() - page_bytes
     assert 0 < pushed <= HOURLY_BUDGET_BYTES, pushed

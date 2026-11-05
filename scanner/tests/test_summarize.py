@@ -14,7 +14,7 @@ from sdrscan.summarize import MAX_GZ_BYTES, build_digest, encode_digest
 
 from . import weekgen
 from .conftest import T0
-from .weekgen import AIR, BUSY, CARRIER, END, HAM, NEW, QUIET, SPUR
+from .weekgen import AIR, BUSY, CARRIER, END, HAM, NEW, QUIET, REPEATER, SPUR, TONE
 
 GOLDEN = Path(__file__).parent / "golden" / "digest_week.json"
 
@@ -56,17 +56,22 @@ def test_new_unusual_quiet(week):
 
 
 def test_digest_matches_golden_and_is_deterministic(week):
-    a = encode_digest(_digest(week))
-    b = encode_digest(_digest(week))
+    # The golden digest has transcripts and call signs on, so the dashboard fixture built
+    # from it shows every section.
+    a = encode_digest(_digest(week, include_transcripts=True))
+    b = encode_digest(_digest(week, include_transcripts=True))
     assert a == b
     if os.environ.get("UPDATE_GOLDEN") == "1":
         GOLDEN.write_bytes(a + b"\n")
     assert GOLDEN.read_bytes() == a + b"\n", "rerun with UPDATE_GOLDEN=1 after a deliberate change"
 
 
-def test_digest_gzip_budget(week):
-    raw = encode_digest(_digest(week))
-    assert len(gzip.compress(raw, 9, mtime=0)) <= MAX_GZ_BYTES
+@pytest.mark.parametrize("private", [False, True])
+def test_digest_gzip_budget(week, private):
+    raw = encode_digest(_digest(week, include_transcripts=private))
+    gz = len(gzip.compress(raw, 9, mtime=0))
+    print(f"week digest, include_transcripts={private}: {len(raw)} raw, {gz} gzipped")
+    assert gz <= MAX_GZ_BYTES
 
 
 def test_worst_case_500_active_channels_stays_under_4kb(tmp_path, vclock):
@@ -91,7 +96,13 @@ def test_worst_case_500_active_channels_stays_under_4kb(tmp_path, vclock):
             tier=1,
             sha256="",
         )
-        store.add_transcript(cid, None, "fake", "x" * 400, 0.95, 0.1, END - 500)
+        text = f"K{i % 10}{chr(65 + i % 26)}{chr(65 + i // 26 % 26)}Q " + "x" * 400
+        tid = store.add_transcript(cid, None, "fake", text, 0.95, 0.1, END - 500)
+        store.add_calls_from_transcript(text, 0.95, hz=hz, band="ham_2m", t=END - 500,
+                                        transcript_id=tid)  # fmt: skip
+        keyup = weekgen._tx(plan, hz, END - 200, 1.0, cls="keyup", tone=100.0 + i % 50)
+        store.add_tx(keyup)
+        rollup.on_tx_closed(store, keyup)
     store.flush()
     d = build_digest(store, weekgen.fake_health(), END, plan=plan, include_transcripts=True)
     gz = gzip.compress(encode_digest(d), 9, mtime=0)
@@ -139,3 +150,67 @@ def test_prose_engines(tmp_path):
         assert argv[argv.index(flag) + 1] == val
     assert "-no-cnv" in argv
     assert isinstance(make_prose(ProseConfig()), NullProse)
+
+
+def _strings(x) -> list[str]:
+    if isinstance(x, dict):
+        return [k for k in x] + [s for v in x.values() for s in _strings(v)]
+    if isinstance(x, list):
+        return [s for v in x for s in _strings(v)]
+    return [x] if isinstance(x, str) else []
+
+
+def test_flag_off_digest_has_no_transcript_text_and_no_call_signs(week):
+    d = _digest(week)
+    raw = encode_digest(d).decode()
+    for call in ("K7ABC", "W7XYZ", "KD7ABC", "WRAB123", "N123AB"):
+        assert call not in raw
+    assert "staging" not in raw and "runway" not in raw
+    assert "text" not in _strings(d) and "calls" not in _strings(d)
+    # Stage activity is a count, not an identity, so it stays.
+    assert d["windows"]["day"]["pipeline"]["callsigns"] > 0
+
+
+def test_call_signs_per_window_with_their_channels(week):
+    d = _digest(week, include_transcripts=True)
+    week_calls = {c["call"]: c for c in d["windows"]["week"]["calls"]}
+    day_calls = {c["call"]: c for c in d["windows"]["day"]["calls"]}
+    assert {"K7ABC", "W7XYZ", "KD7ABC", "WRAB123", "N123AB"} <= set(day_calls)
+    k = week_calls["K7ABC"]
+    assert k["kind"] == "ham" and k["hz"] == [HAM]
+    assert k["n"] > day_calls["K7ABC"]["n"]  # heard at noon on earlier days too
+    assert k["first_ts"] < END - 6 * 86400 + 86400 and k["last_ts"] <= END
+    assert day_calls["N123AB"]["kind"] == "aviation" and day_calls["WRAB123"]["hz"] == [BUSY]
+    assert {c["call"] for c in d["windows"]["all"]["calls"]} >= set(day_calls)
+    assert d["windows"]["week"]["calls_n"] == len(week_calls)
+    ns = [c["n"] for c in d["windows"]["week"]["calls"]]
+    assert ns == sorted(ns, reverse=True)
+    rows = {c["hz"]: c for c in d["windows"]["day"]["top"]}
+    assert set(rows[HAM]["calls"]) == {"K7ABC", "W7XYZ"}
+    assert rows[BUSY]["calls"] == ["WRAB123"]
+
+
+def test_key_ups_and_tones_per_channel(week):
+    d = _digest(week, include_transcripts=True)
+    rows = {c["hz"]: c for c in d["windows"]["day"]["top"]}
+    rep = rows[REPEATER]
+    assert rep["keyup"] == 15 * 4 and rep["voice"] == 15 and rep["tx"] == 15 * 5
+    assert rep["tone"] == TONE
+    assert "keyup" not in rows[BUSY] and "tone" not in rows[BUSY]
+    assert d["windows"]["week"]["keyups"] == 7 * 15 * 4
+    keyups = [r for r in d["recent"] if r["cls"] == "keyup"]
+    assert all(r["hz"] == REPEATER for r in keyups)
+
+
+def test_pipeline_counts_every_stage(week):
+    d = _digest(week, include_transcripts=True)
+    day, wk = d["windows"]["day"]["pipeline"], d["windows"]["week"]["pipeline"]
+    keys = {"survey_hops", "peaks", "opened", "dwell_s", "voice", "keyups", "clips", "evicted",
+            "transcripts", "callsigns", "push_kb"}  # fmt: skip
+    assert set(day) == keys
+    # The day window is the last 24 hourly rows, and the current hour is empty here.
+    assert day["survey_hops"] >= 23 * 22_000 and wk["survey_hops"] > 6 * day["survey_hops"]
+    assert day["keyups"] == 60 and day["evicted"] == 2 and day["clips"] == day["transcripts"]
+    assert day["callsigns"] >= len(d["windows"]["day"]["calls"])
+    assert day["push_kb"] == round(23 * 7.4)
+    assert d["windows"]["all"]["pipeline"]["survey_hops"] == wk["survey_hops"]

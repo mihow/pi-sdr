@@ -9,7 +9,12 @@ Sections:
 
 - ``now``: channels heard in the last 5 minutes, and the tuner state when known.
 - ``windows.hour|day|week|all``: the busiest channels by active seconds (always-on carriers
-  and spurs excluded), the busiest bands by occupancy, and coverage.
+  and spurs excluded) with their key-ups and most common CTCSS tone, the busiest bands by
+  occupancy, coverage, and ``pipeline``: what each stage did in the window (survey hops,
+  peaks, tracks opened, dwell seconds, voice and key-up transmissions, clips kept and
+  evicted, transcripts, call signs found, kilobytes pushed).
+- ``windows.*.calls`` (opt-in, with transcripts): the call signs heard most, with their
+  channels and first and last time heard; each busiest channel also lists its calls.
 - ``new``: at least 3 transmissions in the last 24 h and none in the 7 days before.
 - ``unusual``: an hour in the last 24 h whose activity is more than 3 deviations above its
   baseline. The baseline is the same hour of the week over the last 4 weeks once 4 weeks of
@@ -19,6 +24,9 @@ Sections:
 - ``always_on``: carriers and spurs, kept apart so they never fill the busiest lists.
 - ``all_time`` and ``how``: totals and a typical hour-of-week strip (168 digits).
 - ``recent`` and ``transcripts`` (opt-in, confidence at least 0.6, 160 characters).
+
+Transcripts and call signs come from what people said, and the off-site copy is publicly
+readable, so both go in only with ``include_transcripts``. Stage counts always go in.
 - ``health``: rig health, coverage and the uplink ledger.
 """
 
@@ -29,6 +37,7 @@ import json
 import math
 import statistics
 
+from . import callsign
 from .bandplan import BandPlan
 from .health import Health
 from .rollup import DAY, H, day_of, hour_of, query_window
@@ -51,6 +60,12 @@ UNUSUAL_FLOOR_S = 30.0
 QUIET_SILENT_H = 3
 QUIET_USUAL_S = 60.0
 QUIET_TOP = 20
+CALLS_N = 8
+CALLS_PER_CHANNEL = 3
+CALL_CHANNELS_N = 3
+NOW_CALLS_N = 5
+PIPELINE = ("survey_hops", "peaks", "opened", "dwell_s", "voice", "keyups", "clips",
+            "evicted", "transcripts", "callsigns")  # fmt: skip
 
 
 def r1(x: float | None) -> float | None:
@@ -91,7 +106,10 @@ def build_digest(
         for r in store.db.execute("SELECT hz, always_on, spur FROM channels")
         if r["always_on"] or r["spur"]
     }
-    windows = {w: _window(store, w, now, flags) for w in ("hour", "day", "week", "all")}
+    windows = {
+        w: _window(store, w, now, flags, include_transcripts)
+        for w in ("hour", "day", "week", "all")
+    }
     used_bands = set()
     hz_seen: set[int] = set()
     for w in windows.values():
@@ -102,7 +120,7 @@ def build_digest(
         "v": SCHEMA,
         "site": site_id,
         "generated_at": int(now),
-        "now": _now(store, now, flags, now_state),
+        "now": _now(store, now, flags, now_state, include_transcripts),
         "windows": windows,
         "new": _new(store, now, flags),
         "unusual": _unusual(store, now, flags, baseline),
@@ -150,12 +168,15 @@ def _band_ids(store: Store, d: dict) -> None:
     tag(d["always_on"]["list"])
 
 
-def _window(store: Store, window: str, now: float, flags: dict[int, str]) -> dict:
+def _window(store: Store, window: str, now: float, flags: dict[int, str], with_calls: bool) -> dict:
     ws = query_window(store, window, now)
     ranked = sorted(
         ((hz, c) for hz, c in ws.channels.items() if hz not in flags and c.active_s > 0),
         key=lambda kv: (-kv[1].active_s, kv[0]),
     )
+    t0 = ws.t0 if window != "all" else now - 400 * DAY
+    tones = _tones(store, t0, now)
+    heard = _heard(store, window, t0, now) if with_calls else {}
     top = []
     for hz, c in ranked[:TOP_N]:
         item = {
@@ -164,22 +185,100 @@ def _window(store: Store, window: str, now: float, flags: dict[int, str]) -> dic
             "tx": int(c.tx_count),
             "voice": int(c.voice_tx),
         }
+        if c.keyup_tx:
+            item["keyup"] = int(c.keyup_tx)
+        if hz in tones:
+            item["tone"] = tones[hz]
         if c.max_snr_db is not None:
             item["snr"] = r1(c.max_snr_db)
         if hz in ws.series:
             item["spark"] = spark(ws.series[hz])
+        on_hz = sorted(
+            ((call, a[hz][0]) for call, a in heard.items() if hz in a), key=lambda x: (-x[1], x[0])
+        )
+        if on_hz:
+            item["calls"] = [call for call, _ in on_hz[:CALLS_PER_CHANNEL]]
         top.append(item)
-    t0 = ws.t0 if window != "all" else now - 400 * DAY
     bands, coverage = _bands(store, t0, now)
-    return {
+    out = {
         "top": top,
         "channels": len(ranked),
         "active_s": int(round(sum(c.active_s for _, c in ranked))),
         "tx": int(sum(c.tx_count for _, c in ranked)),
+        "keyups": int(sum(c.keyup_tx for _, c in ranked)),
         "bands": bands,
         "coverage_pct": coverage,
         "cell_s": ws.cell_s,
+        "pipeline": _pipeline(store, t0, now),
     }
+    if with_calls:
+        out["calls"] = _calls(heard)
+        out["calls_n"] = len(heard)
+    return out
+
+
+def _tones(store: Store, t0: float, now: float) -> dict[int, float]:
+    """The most common CTCSS tone of each channel in the window (raw rows, 90 days)."""
+    best: dict[int, tuple[int, float]] = {}
+    for r in store.db.execute(
+        "SELECT hz, ctcss_hz, COUNT(*) n FROM transmissions WHERE t_start >= ? AND t_start <= ?"
+        " AND ctcss_hz IS NOT NULL GROUP BY hz, ctcss_hz",
+        (int(t0), int(now)),
+    ):
+        cand = (r["n"], -r["ctcss_hz"])
+        if r["hz"] not in best or cand > best[r["hz"]]:
+            best[r["hz"]] = cand
+    return {hz: r1(-tone) for hz, (_, tone) in best.items()}
+
+
+def _heard(store: Store, window: str, t0: float, now: float) -> dict[str, dict]:
+    """call -> {hz: (count, kind, first_ts, last_ts)} for calls sure enough to show.
+
+    Hour, day and week read the raw rows; all-time reads the permanent per-channel totals.
+    """
+    if window == "all":
+        rows = store.db.execute(
+            "SELECT call, hz, kind, n, first_ts f, last_ts l FROM callsign_hz"
+        ).fetchall()
+    else:
+        rows = store.db.execute(
+            "SELECT call, hz, kind, COUNT(*) n, MIN(t) f, MAX(t) l FROM callsigns"
+            " WHERE t >= ? AND t <= ? AND confidence >= ? GROUP BY call, hz",
+            (int(t0), int(now), callsign.SHOW_CONFIDENCE),
+        ).fetchall()
+    out: dict[str, dict] = {}
+    for r in rows:
+        out.setdefault(r["call"], {})[r["hz"]] = (r["n"], r["kind"], r["f"], r["l"])
+    return out
+
+
+def _calls(heard: dict[str, dict]) -> list[dict]:
+    items = []
+    for call, by_hz in heard.items():
+        chans = sorted(by_hz.items(), key=lambda kv: (-kv[1][0], kv[0]))
+        items.append(
+            {
+                "call": call,
+                "kind": chans[0][1][1],
+                "n": sum(v[0] for v in by_hz.values()),
+                "hz": [hz for hz, _ in chans[:CALL_CHANNELS_N]],
+                "first_ts": min(v[2] for v in by_hz.values()),
+                "last_ts": max(v[3] for v in by_hz.values()),
+            }
+        )
+    items.sort(key=lambda c: (-c["n"], -c["last_ts"], c["call"]))
+    return items[:CALLS_N]
+
+
+def _pipeline(store: Store, t0: float, now: float) -> dict:
+    counts = store.counts(t0, now)
+    out = {k: int(round(counts.get(k, 0))) for k in PIPELINE}
+    pushed = store.db.execute(
+        "SELECT SUM(bytes_out + bytes_in) FROM uplink_log WHERE ts >= ? AND ts <= ?",
+        (int(hour_of(t0)), int(now)),
+    ).fetchone()[0]
+    out["push_kb"] = int(round((pushed or 0) / 1000))
+    return out
 
 
 def _bands(store: Store, t0: float, now: float) -> tuple[list[dict], float | None]:
@@ -203,7 +302,9 @@ def _bands(store: Store, t0: float, now: float) -> tuple[list[dict], float | Non
     )
 
 
-def _now(store: Store, now: float, flags: dict[int, str], state: dict | None) -> dict:
+def _now(
+    store: Store, now: float, flags: dict[int, str], state: dict | None, with_calls: bool
+) -> dict:
     active = []
     if state is not None and state.get("active") is not None:
         active = [a for a in state["active"] if a["hz"] not in flags]
@@ -227,6 +328,13 @@ def _now(store: Store, now: float, flags: dict[int, str], state: dict | None) ->
     out = {"active": active[:TOP_N], "count": len(active)}
     if state is not None and state.get("tuner"):
         out["tuner"] = state["tuner"]
+    if with_calls:
+        rows = store.db.execute(
+            "SELECT call, MAX(t) l FROM callsigns WHERE t >= ? AND confidence >= ?"
+            " GROUP BY call ORDER BY l DESC, call LIMIT ?",
+            (int(now - NOW_S), callsign.SHOW_CONFIDENCE, NOW_CALLS_N),
+        )
+        out["calls"] = [r["call"] for r in rows]
     return out
 
 
@@ -373,8 +481,8 @@ def _how(store: Store) -> str:
 
 def _recent(store: Store, now: float, flags: dict[int, str], with_text: bool) -> list[dict]:
     rows = store.db.execute(
-        "SELECT t.hz, t.t_start, t.dur_ms, t.class, t.peak_snr_db, c.id clip, c.path,"
-        " r.text, r.confidence FROM transmissions t LEFT JOIN clips c ON c.id = t.clip_id"
+        "SELECT t.hz, t.t_start, t.dur_ms, t.class, t.peak_snr_db, t.ctcss_hz, c.id clip,"
+        " c.path, r.text, r.confidence FROM transmissions t LEFT JOIN clips c ON c.id = t.clip_id"
         " LEFT JOIN transcripts r ON r.id = t.transcript_id WHERE t.t_start >= ?"
         " ORDER BY t.t_start DESC, t.hz LIMIT 200",
         (int(now - DAY),),
@@ -390,6 +498,8 @@ def _recent(store: Store, now: float, flags: dict[int, str], with_text: bool) ->
             "cls": r["class"] or "unknown",
             "snr": r1(r["peak_snr_db"]),
         }
+        if r["ctcss_hz"] is not None:
+            item["tone"] = r1(r["ctcss_hz"])
         if r["clip"] is not None and r["path"]:
             item["clip"] = r["clip"]
         if with_text and r["text"] and (r["confidence"] or 0) >= MIN_CONFIDENCE:
