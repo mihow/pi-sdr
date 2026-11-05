@@ -1,0 +1,249 @@
+{
+  "schema": "sdrscan.corpus/1",
+  "about": "Clips of a private IQ corpus. Set SDRSCAN_IQ_CORPUS to the capture directory; files are named relative to it. sha256 covers the exact bytes of the slice. See scanner/README.md.",
+  "clips": [
+    {
+      "id": "koin_443150_voice",
+      "file": "koin_443_150_60sec.cf32",
+      "offset_s": 0.0,
+      "seconds": 2.0,
+      "sha256": "9865f81b34b85aae3635443ec19ec3c0664322e7705318bd555dcc4b12f33bc9",
+      "notes": "70 cm repeater conversation (SDRplay cf32). The channel sits on the tuner center, so peaks straddle the DC mask.",
+      "expect": {
+        "detect": {
+          "channels": [
+            {
+              "hz": 443150000,
+              "tol_hz": 10000,
+              "min_hop_frac": 0.2
+            },
+            {
+              "hz": 443025000,
+              "tol_hz": 5000,
+              "min_hop_frac": 0.9
+            }
+          ],
+          "clip_frac_max": 0.01
+        },
+        "demod": [
+          {
+            "hz": 443150000,
+            "mode": null,
+            "audio_peak_hz": 107.2,
+            "tol_hz": 2.0
+          }
+        ],
+        "gate": [
+          {
+            "hz": 443150000,
+            "mode": null,
+            "class": "voice",
+            "min_voice_s": 0.5
+          }
+        ]
+      }
+    },
+    {
+      "id": "koin_443150_ctcss_reads_as_data",
+      "file": "koin_443_150_60sec.cf32",
+      "offset_s": 46.0,
+      "seconds": 2.0,
+      "sha256": "1c032fc4a1738240023b7675c8ef3e4c69fd6e71d3209d23e34c6b916a3180c5",
+      "notes": "The repeater sends a 107.2 Hz CTCSS tone under the speech. The gate's tone test counts it, so stretches of this conversation read as data. A high-pass below 300 Hz before the tone test is the likely fix; the scan loop is unchanged here.",
+      "expect": {
+        "detect": {
+          "channels": [
+            {
+              "hz": 443150000,
+              "tol_hz": 10000,
+              "min_hop_frac": 0.2
+            }
+          ]
+        },
+        "gate": [
+          {
+            "hz": 443150000,
+            "mode": null,
+            "class": "voice",
+            "min_voice_s": 0.5,
+            "xfail": "CTCSS tone makes the gate call speech data"
+          }
+        ]
+      }
+    },
+    {
+      "id": "noise_floor_450mhz",
+      "file": "noise_floor_450mhz.cf32",
+      "offset_s": 0.0,
+      "seconds": 2.0,
+      "sha256": "5b67582aa547542b6618cd103ed10726f99ed8ee721e21bfc6530a162aa07b12",
+      "notes": "Empty 450 MHz window (SDRplay cf32): nothing should come out of any stage.",
+      "expect": {
+        "detect": {
+          "none": true,
+          "clip_frac_max": 0.01
+        },
+        "gate": [
+          {
+            "hz": 450012500,
+            "mode": "nfm",
+            "class": "unknown",
+            "max_voice_s": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "noaa_weather_162550",
+      "file": "noaa_weather_162mhz.cf32",
+      "offset_s": 0.0,
+      "seconds": 2.0,
+      "sha256": "0b49ea7a77d046b7ccad3fdf129410b51240d97cd74e4df5cc5916d1dd62e5a4",
+      "notes": "NOAA Weather Radio (SDRplay cf32, tuned to 162.475 MHz). The voice carrier in this capture is 162.550 MHz; 162.475 sits on the tuner center and demodulates to noise.",
+      "expect": {
+        "detect": {
+          "channels": [
+            {
+              "hz": 162550000,
+              "tol_hz": 5000,
+              "min_hop_frac": 0.9
+            }
+          ],
+          "clip_frac_max": 0.01
+        },
+        "gate": [
+          {
+            "hz": 162550000,
+            "mode": null,
+            "class": "voice",
+            "min_voice_s": 1.0
+          },
+          {
+            "hz": 162475000,
+            "mode": null,
+            "class": "unknown",
+            "max_voice_s": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "v4_airband_121708_carrier",
+      "file": "live_20260324/airband_121000000_2400000.raw",
+      "offset_s": 0.0,
+      "seconds": 2.0,
+      "sha256": "6a4a91a9e3a079b1392e8c4615b85410f78f6a6141e0c90d810467d714f557fe",
+      "notes": "RTL-SDR Blog V4 cu8. A steady narrow carrier at 121.7083 MHz (an 8.33 kHz airband channel; the band plan's 25 kHz raster files it under 121.700) with no speech.",
+      "expect": {
+        "detect": {
+          "channels": [
+            {
+              "hz": 121708333,
+              "tol_hz": 2000,
+              "min_hop_frac": 0.9
+            }
+          ],
+          "clip_frac_max": 0.01
+        },
+        "gate": [
+          {
+            "hz": 121708333,
+            "mode": "am",
+            "class": "unknown",
+            "max_voice_s": 0.0
+          }
+        ],
+        "decodes_like": {
+          "file": "live_20260324/airband_121000000_2400000.cf32",
+          "sha256": "ebccee36c00f031fc9f08db5ea8098f70a1a1227d1092bd428d1351f58fd7d6a"
+        }
+      }
+    },
+    {
+      "id": "v4_ham2m_carriers",
+      "file": "live_20260324/ham2m_146500000_2400000.raw",
+      "offset_s": 0.0,
+      "seconds": 2.0,
+      "sha256": "0a036f60f8899649f7246441f1d3b48c35d24e972aefbb77b19fd35cbea19d11",
+      "notes": "RTL-SDR Blog V4 cu8. Two steady carriers on the 2 m band, idle (no speech).",
+      "expect": {
+        "detect": {
+          "channels": [
+            {
+              "hz": 146665000,
+              "tol_hz": 5000,
+              "min_hop_frac": 0.9
+            },
+            {
+              "hz": 146765000,
+              "tol_hz": 5000,
+              "min_hop_frac": 0.9
+            }
+          ],
+          "clip_frac_max": 0.05
+        },
+        "gate": [
+          {
+            "hz": 146765000,
+            "mode": null,
+            "class": "unknown",
+            "max_voice_s": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "v4_fm_broadcast_overloaded",
+      "file": "live_20260324/fm_97100000_2400000.raw",
+      "offset_s": 0.0,
+      "seconds": 2.0,
+      "sha256": "606e04113c6c048e69670cf56cd3a61b101e120927db71b5792e124f165bd884",
+      "notes": "RTL-SDR Blog V4 cu8 with the gain too high: most samples hit the rail.",
+      "expect": {
+        "detect": {
+          "channels": [
+            {
+              "hz": 97100000,
+              "tol_hz": 100000,
+              "min_hop_frac": 0.5
+            },
+            {
+              "hz": 97900000,
+              "tol_hz": 100000,
+              "min_hop_frac": 0.5
+            }
+          ],
+          "clip_frac_min": 0.3
+        }
+      }
+    },
+    {
+      "id": "v4_noaa_overloaded_voice",
+      "file": "live_20260324/noaa_162500000_2400000.raw",
+      "offset_s": 0.0,
+      "seconds": 2.0,
+      "sha256": "496b23150c9ecee2cd33eeed0ad2b1f8350d5aedbc39c2d7f37c017d5c947ca7",
+      "notes": "RTL-SDR Blog V4 cu8, overloaded (intermodulation everywhere), yet the 162.550 MHz voice survives FM demodulation.",
+      "expect": {
+        "detect": {
+          "channels": [
+            {
+              "hz": 162550000,
+              "tol_hz": 5000,
+              "min_hop_frac": 0.9
+            }
+          ],
+          "clip_frac_min": 0.5
+        },
+        "gate": [
+          {
+            "hz": 162550000,
+            "mode": null,
+            "class": "voice",
+            "min_voice_s": 1.0
+          }
+        ]
+      }
+    }
+  ]
+}

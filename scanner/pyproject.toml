@@ -37,7 +37,7 @@ addopts = "-ra --strict-markers"
 markers = [
     "slow: long scene simulations and browser checks",
     "browser: needs Playwright",
-    "fixtures: needs recorded IQ under SDRSCAN_IQ_FIXTURES",
+    "corpus: needs the private IQ corpus under SDRSCAN_IQ_CORPUS",
     "hw: needs a real RTL-SDR dongle; never run in CI",
     "docker: starts a local container (MinIO); skipped when Docker or the image is absent",
 ]

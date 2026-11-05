@@ -39,9 +39,9 @@ def pytest_collection_modifyitems(config, items):
 
     skips = {
         "hw": (os.environ.get("SDRSCAN_HW") != "1", "set SDRSCAN_HW=1 with a dongle attached"),
-        "fixtures": (
-            not os.environ.get("SDRSCAN_IQ_FIXTURES"),
-            "set SDRSCAN_IQ_FIXTURES to a directory of recorded IQ",
+        "corpus": (
+            not os.environ.get("SDRSCAN_IQ_CORPUS"),
+            "set SDRSCAN_IQ_CORPUS to the directory of recorded IQ (tests/corpus/manifest.json)",
         ),
         "browser": (importlib.util.find_spec("playwright") is None, "Playwright not installed"),
     }
