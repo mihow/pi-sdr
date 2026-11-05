@@ -28,7 +28,7 @@ The dashboard answers these questions:
 | Constraint | Value | Consequence |
 |---|---|---|
 | Computer | Raspberry Pi 5, 4x Cortex-A76, RAM size not yet confirmed (4 or 8 GB) | Budget for 4 GB. |
-| Shared workload | An ambient music player (mpv + PipeWire) and remote-access services run on the same Pi | The scanner has no audio-device access, runs at low priority, and has a CPU quota. |
+| Shared workload | Remote-access services run on the same Pi, and they are the only way to reach it | The scanner runs at low priority with a CPU quota, so remote access stays responsive. It has no audio-device access. |
 | Receiver | RTL-SDR Blog V4 (R828D), about 24 MHz to 1.766 GHz, 2.4 MS/s stable, 8-bit | One tuner, one process at a time. 2.4 MHz per window, about 1.92 MHz usable after cropping. |
 | Uplink | LTE with a small monthly data cap. Idle Tailscale already uses about 25 MB/day | Scanner target: under 0.5 MB/day, hard cap 30 MB/month. Never raw IQ or audio by default. |
 | Storage | Small SD card | Strict rolling quota, free-space floor, tmpfs staging, batched writes. |
@@ -285,6 +285,21 @@ spectral flatness < 0.35). A segment is voice when at least 30% of frames in a 3
 window are voice. These thresholds come from v1 and are untuned. A Silero VAD backend can
 replace webrtcvad later behind the same interface.
 
+The gate also measures the CTCSS tone, on its input before the high-pass (`voice/ctcss.py`):
+the audio is low-passed and decimated to 1 kHz, the last 4 s are kept, and a zero-padded
+FFT refined by a direct DFT finds the strongest component from 60 to 260 Hz. It counts when
+it holds at least 25% of the low-band energy, has an amplitude of at least 0.01, and is
+within 1 Hz of a standard tone (the 50 EIA tones plus 150.0 Hz). The summary reports it as
+`ctcss_hz`. The tone names the repeater or user group, also when nobody speaks.
+
+When a track closes, the runner turns the gate's verdict into the transmission's class
+(`runner.tx_class`). Voice and data stay as they are. A dwell transmission with neither,
+at most `detect.keyup_max_s` long (5 s, which allows for a repeater's 1 to 3 s hang time),
+is a `keyup`: a user or repeater keying up, a kerchunk or a squelch tail. Longer ones stay
+`unknown`. A transmission seen only by survey hops has no audio and stays `unknown`. The
+tracker opens a dwell track at once at 20 dB SNR, or after 1 s of dwell readings, so a
+weaker key-up shorter than 1 s is still not recorded.
+
 ```python
 class VoiceGate:
     def push(self, pcm16k: numpy.ndarray) -> VoiceState
@@ -299,6 +314,17 @@ audio context for short clips, and a 300 to 3000 Hz bandpass before inference. I
 optional and off by default. Moonshine Tiny and sherpa-onnx are other candidates for the
 same interface. Results below a confidence threshold, or matching a hallucination blocklist
 ("thank you", "thanks for watching"), are stored but never shown as fact.
+
+Call signs (`callsign.py`) are read from each stored transcript: US amateur calls (1x1 to
+2x3, prefixes K, N, W and AA to AL), GMRS calls (4 letters and 3 digits, or the older 3
+letters and 4 digits) and, on airband only, US aircraft registrations ("November one two
+three alpha bravo" is N123AB). Spoken NATO/ITU letters and number words (with "niner")
+count as well as written calls. A match must fit a format exactly; a short blocklist
+(N2O, W3C) and the hallucination list stop common false matches. Each call has a
+confidence: 0.9 written, 0.8 spelled with phonetics, 0.7 mixed, 0.55 with loose single
+letters, less for 1x1 calls and for calls with more call-like symbols around them. The
+stored confidence is the lower of the call's and the transcript's. Calls at 0.6 or more are
+summarized.
 
 ### 5.10 ClipStore (`clips.py`)
 
@@ -420,17 +446,20 @@ NTP was not synced).
 
 | Table | Columns | Retention |
 |---|---|---|
-| `meta` | `key PK, value` (`schema_version`, `site_id`) | forever |
+| `meta` | `key PK, value` (`schema_version` 2, `site_id`) | forever |
 | `channels` | `hz PK, band, mode, bw_hz, name, first_seen, last_seen, always_on, spur` | forever |
-| `transmissions` | `id PK, hz, t_start, t_end, dur_ms, peak_snr_db, med_snr_db, floor_db, bw_hz, source, voice_ratio, class (voice/data/carrier/unknown), clip_id NULL, transcript_id NULL, clock_ok, boot_id` | 90 days |
+| `transmissions` | `id PK, hz, t_start, t_end, dur_ms, peak_snr_db, med_snr_db, floor_db, bw_hz, source, voice_ratio, class (voice/keyup/data/carrier/unknown), clip_id NULL, transcript_id NULL, clock_ok, boot_id, ctcss_hz NULL` | 90 days |
 | `clips` | `id PK, hz, t_start, dur_ms, bytes, codec, path NULL, tier, pinned, sha256, evicted_at NULL` | row forever, file by quota |
 | `transcripts` | `id PK, clip_id, engine, text, confidence, rtf, created` | 90 days |
-| `rollup_hour` | `hz, hour_ts, active_s, tx_count, voice_tx, voice_s, max_snr_db, first_ts, last_ts, PK(hz, hour_ts)` | 400 days |
+| `rollup_hour` | `hz, hour_ts, active_s, tx_count, voice_tx, voice_s, keyup_tx, max_snr_db, first_ts, last_ts, PK(hz, hour_ts)` | 400 days |
 | `band_hour` | `band, hour_ts, occupancy_pct, peak_count, floor_med_db, coverage_pct` | 400 days |
 | `spectrum_hour` | `hour_ts PK, bins BLOB` (1742 uint8 bins of 1 MHz, occupancy %) | 400 days, about 15 MB/year |
-| `rollup_day` | `hz, day_ts, active_s, tx_count, voice_tx, voice_s, max_snr_db, PK(hz, day_ts)` | forever |
+| `rollup_day` | `hz, day_ts, active_s, tx_count, voice_tx, voice_s, keyup_tx, max_snr_db, PK(hz, day_ts)` | forever |
 | `profile_how` | `hz, how (0-167), ema_active_s, ema_var, n, PK(hz, how)` | forever |
-| `channel_total` | `hz PK, active_s, tx_count, voice_tx, hours_seen` | forever |
+| `channel_total` | `hz PK, active_s, tx_count, voice_tx, keyup_tx, hours_seen` | forever |
+| `callsigns` | `id PK, call, kind (ham/gmrs/aviation), hz, t, tx_id, transcript_id, confidence` | 90 days |
+| `callsign_hz` | `call, hz, kind, n, first_ts, last_ts, PK(call, hz)` (calls with confidence at least 0.6) | forever |
+| `stage_hour` | `hour_ts, stage, n, PK(hour_ts, stage)` | 400 days |
 | `health` | `ts PK, temp_c, throttled, disk_free_mb, quota_used_mb, dongle_ok, drops, clip_frac, mode, clock_ok` | 90 days |
 | `uplink_log` | `ts, target, bytes_out, bytes_in, status` | 400 days |
 
@@ -444,6 +473,14 @@ Window definitions:
 | week | Sum of the last 7 `rollup_day` rows plus today's hours |
 | all-time | `channel_total` plus `profile_how` |
 
+Schema 2 added `ctcss_hz`, the `keyup_tx` columns and the last three tables; `migrate`
+adds them to a schema 1 database in place.
+
+`stage_hour` holds one counter per pipeline stage and hour, added where the stage runs:
+`survey_hops`, `peaks` (every analyzed hop), `opened` (tracks), `dwell_s`, `voice`,
+`keyups`, `clips`, `evicted`, `transcripts` and `callsigns`. The counters are summed in
+memory and written with the batch, so they cost no extra writes.
+
 `coverage_pct` is the share of planned tier A revisits that happened in the hour. Heat,
 dwells and external jobs reduce it. The dashboard shows it, so low coverage does not read as
 a quiet hour.
@@ -454,8 +491,15 @@ Summaries are rule-based in the MVP. They are deterministic, testable and never 
 content. The digest (schema v1, sorted keys) contains:
 
 - `now`: channels active in the last 5 minutes with SNR and class, and the tuner state.
-- `hour`, `day`, `week`: top 10 channels by active seconds, with tx count, voice tx and max
-  SNR; top bands by occupancy; a 24-cell sparkline per top channel (7x24 for week).
+- `hour`, `day`, `week`: top 10 channels by active seconds, with tx count, voice tx,
+  key-ups, the most common CTCSS tone and max SNR; top bands by occupancy; a 24-cell
+  sparkline per top channel (7x24 for week); the window's key-up total; and `pipeline`,
+  the window's sum of each `stage_hour` counter plus the kilobytes pushed (`push_kb`).
+- `calls` per window (only with `include_transcripts`): up to 8 call signs by count, each
+  with kind, count, up to 3 channels, and first and last time heard, plus `calls_n`, the
+  number of distinct calls. Each top channel lists up to 3 of its calls, and `now` lists
+  the calls of the last 5 minutes. Hour, day and week read the raw `callsigns` rows; all
+  time reads `callsign_hz`.
 - `new`: a channel with at least 3 transmissions in the window and none in the prior 7 days.
   Spurs are excluded.
 - `unusual`: activity z-score above 3 against `profile_how` for the same hour of the week
@@ -466,11 +510,16 @@ content. The digest (schema v1, sorted keys) contains:
 - `all_time`: totals, typical busiest hours, number of distinct channels.
 - `transcripts` (when STT is on): up to 3 snippets per channel per day with confidence at
   least 0.6, each at most 160 characters, each with its confidence. Off in the uplink by
-  default.
+  default. Call signs come from transcripts and follow the same setting: with
+  `uplink.include_transcripts: false` the pushed digest holds no transcript text and no
+  call sign (a test checks this); only the stage counts say how many were found. The live
+  page on the rig, reachable only over the tailnet, always shows both.
 - `health`: section 5.13 fields, plus `generated_at`, `coverage_pct` and the uplink ledger.
 
 Every list has a fixed cap, and numbers are integers or have one decimal place. The digest
-size is bounded at about 3 KB gzipped (target), 4 KB maximum, however busy the site is.
+size is bounded at about 3 KB gzipped (target), 4 KB maximum, however busy the site is. The
+week fixture measures 1.4 KB gzipped with transcripts off and 1.9 KB with transcripts and
+call signs on.
 
 **LLM prose (optional, deferred).** A `ProseEngine` adapter runs `llama-cli` one-shot with
 Qwen2.5-0.5B or 1.5B Instruct Q4_K_M, 2 threads, nice 19, once a day, only in `normal` mode
@@ -573,12 +622,21 @@ Layout, top to bottom:
    uplink this month, coverage. Stale after 2 h (amber), offline after 6 h (red).
 2. **Segmented control**: Now / Hour / Day / Week / All.
 3. **Busiest channels**: name, frequency, band, a bar of active minutes, a 24-cell SVG
-   sparkline.
-4. **New and unusual**, then **quiet**.
-5. **Bands by occupancy**.
-6. **Recent transmissions** with transcript snippets and confidence badges, when present.
-7. **Always-on / spurs**, collapsed by default.
-8. **All-time typical hour-of-week** strip.
+   sparkline. A line under the name gives key-ups, the CTCSS tone and the channel's call
+   signs, when there are any.
+4. **Call signs**: the most heard calls of the window, with kind, count, channels, and
+   first and last time. Without call signs in the digest it says "Transcripts and call
+   signs stay on the rig; set uplink.include_transcripts to publish them".
+5. **New and unusual**, then **quiet**.
+6. **Bands by occupancy**.
+7. **Recent transmissions** with class (key-ups labelled), tone, and transcript snippets
+   with confidence badges, when present.
+8. **What the rig did**: each stage's counts for the window (survey hops with coverage,
+   peaks, tracks opened, dwell time, voice, key-ups, clips kept and evicted, transcripts,
+   call signs found, data pushed in the window and this month). The Now tab shows the last
+   hour.
+9. **All-time typical hour-of-week** strip.
+10. **Always-on / spurs**, collapsed by default.
 
 Mobile requirements, all tested:
 
@@ -640,8 +698,8 @@ processes live in Docker's cgroup, not the unit's; `Nice=` on the unit would rea
 docker client. Speech-to-text and the prose model run at nice 19 inside the container. The
 scanner's own 120 s progress watchdog replaces `WatchdogSec`.
 
-The unit has no PipeWire, PulseAudio or audio-device access. It never touches the ambient
-player, the phone tunnel or the remote-access units, and it has no ordering against them.
+The unit has no PipeWire, PulseAudio or audio-device access. It never touches the phone
+tunnel or the remote-access units, and it has no ordering against them.
 
 Install kit (`scanner/deploy/`):
 
@@ -739,7 +797,7 @@ Deferred:
 - Spectrum heatmap rendering; digital or trunked voice; a small CNN classifier; a Codec2
   archive tier; a 15-minute "now" push.
 - Measurements on real Pi and V4 hardware: gain per band, settle time, CPU, thermals, STT
-  speed next to the ambient player.
+  speed.
 - Retiring the legacy OpenWebRX container and the first deployment, which need the Pi.
 
 Known gap, stated plainly: the first deployed version shows activity, not transcripts.
@@ -750,7 +808,7 @@ These need real hardware and block tuning, not the MVP:
 
 1. Retune settle time per band and at the two input-switch boundaries.
 2. Dropped samples at 2.4 MS/s with the reader thread on the Pi 5.
-3. CPU per survey hop and per demodulated channel, next to the ambient player.
+3. CPU per survey hop and per demodulated channel, with remote access in use.
 4. Gain per band that removes the clip ceiling without burying weak bands.
 5. Floor threshold (10 dB default) on 8-bit V4 captures from the site.
 6. STT real-time factor at 2 threads and SoC temperature during a hot afternoon.

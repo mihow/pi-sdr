@@ -16,13 +16,21 @@ Plan: [`docs/superpowers/plans/2026-11-03-sdr-scanner.md`](../docs/superpowers/p
 2. The detector finds peaks above each window's own noise floor. The tracker turns them into
    transmissions, keyed by integer Hz.
 3. During a dwell, each channel is demodulated to 16 kHz audio. The voice gate classifies it
-   as voice, data or noise. A voice transmission of at least 1.5 s keeps an 8 kbit/s Opus clip.
+   as voice, data or noise, and measures the CTCSS tone (67 to 254.1 Hz) before it filters
+   the tone out. A short carrier with no voice or data (5 s at most) is logged as a key-up.
+   Every transmission keeps its tone, which names the repeater or user group. A voice
+   transmission of at least 1.5 s keeps an 8 kbit/s Opus clip.
 4. Speech-to-text (whisper.cpp `whisper-cli` with the `base.en` q5_1 model, built into the
    image) turns kept clips into short transcripts at nice 19, and pauses when the rig runs
    hot. Transcripts show on the rig's live page. They go into the off-site digest only with
    `uplink.include_transcripts: true`, because the off-site page is publicly readable.
-5. Hour, day and all-time rollups feed a rule-based digest: busiest channels, new, unusual
-   and quiet channels, bands, recent transmissions and rig health.
+   Call signs are read from each transcript (amateur, GMRS, and aircraft registrations on
+   airband; written or spelled with phonetics) and follow the same setting.
+5. Hour, day and all-time rollups feed a rule-based digest: busiest channels with key-ups,
+   tones and call signs, the most heard call signs, new, unusual and quiet channels, bands,
+   recent transmissions, what each pipeline stage did, and rig health. Each stage adds to
+   an hourly counter in the database (survey hops, peaks, tracks opened, dwell time, voice,
+   key-ups, clips kept and evicted, transcripts, call signs).
 6. The digest goes off site once an hour, within a monthly byte cap.
 
 ## Try it on a build host
@@ -57,7 +65,7 @@ rest of the pipeline. Every JSON record carries a `schema` field such as
 | capture | `sdrscan capture` | the RTL-SDR | `.cu8` or `.cf32` and a JSON sidecar |
 | detect | `sdrscan detect` | an IQ file | detections JSONL, one 100 ms hop per line |
 | demod | `sdrscan demod` | an IQ file, `--freq`, optional `--mode` | 16 kHz mono WAV |
-| gate | `sdrscan gate` | a WAV | segments JSONL (voice, data, noise) and a summary |
+| gate | `sdrscan gate` | a WAV | segments JSONL (voice, data, noise) and a summary with `ctcss_hz` |
 | stt | `sdrscan stt` | a WAV | transcript JSON |
 | digest | `sdrscan digest --events` (or `--db`) | detections JSONL (or the database) | `digest.json` |
 | dashboard | `sdrscan dashboard` | `digest.json.gz` | `index.html` |
@@ -101,13 +109,13 @@ measures the real numbers after deployment.
 
 | Item | Bytes |
 |---|---|
-| Hourly digest, gzipped (week fixture) | about 1.1 KB, capped at 4 KB for 500 busy channels |
-| One hourly push with headers and the TLS estimate | about 7.3 KB |
-| Per day (24 pushes) | about 175 KB, about 5 MB per month |
-| Dashboard page, gzipped, uploaded only when it changes | about 5.5 KB |
-| Off-site view, first open | 0 rig bytes; the phone fetches about 5.5 KB page + 1 to 4 KB digest |
+| Hourly digest, gzipped (week fixture) | about 1.4 KB (1.9 KB with transcripts and call signs), capped at 4 KB for 500 busy channels |
+| One hourly push with headers and the TLS estimate | about 7.6 KB |
+| Per day (24 pushes) | about 180 KB, about 5.5 MB per month |
+| Dashboard page, gzipped, uploaded only when it changes | about 6.8 KB |
+| Off-site view, first open | 0 rig bytes; the phone fetches about 6.8 KB page + 1 to 4 KB digest |
 | Off-site view, later open | 0 rig bytes; about 0.3 KB on a 304, or the digest |
-| Live page over the tailnet, first open | about 5.8 KB, charged to the ledger |
+| Live page over the tailnet, first open | about 7.1 KB (estimate: the page plus headers), charged to the ledger |
 
 The ledger's hard cap is 30 MB per month. Above 80% the digest goes every 3 h; at the cap
 only a 1 KB health beat goes out per day and the live server answers 429.
@@ -156,7 +164,7 @@ These need the real rig:
 
 1. Retune settle time per band.
 2. Dropped samples at 2.4 MS/s on the Pi 5.
-3. CPU per survey hop and per demodulated channel, next to the ambient player
+3. CPU per survey hop and per demodulated channel, with remote access in use
    (`sdrscan bench --json` prints these).
 4. Gain per band, and the 10 dB floor threshold on real 8-bit captures.
 5. Voice gate thresholds on real radio audio; they come from v1 and are untuned.
@@ -165,3 +173,5 @@ These need the real rig:
 8. Speech-to-text speed and accuracy on real radio audio. Under qemu on the build host,
    `whisper-cli` transcribed the 11 s `jfk.wav` sample correctly in about 2 minutes; the Pi
    is expected to be 20 to 40 times faster than qemu.
+9. CTCSS detection and key-up classification on real repeaters (one corpus clip reads
+   107.2 Hz), and call-sign accuracy of `base.en` on real radio speech.
