@@ -84,6 +84,16 @@ def write_wav(path: Path, pcm: np.ndarray, rate: int = AUDIO_RATE) -> None:
         w.writeframes(pcm16.tobytes())
 
 
+def read_wav(path: Path) -> tuple[np.ndarray, int]:
+    """A 16-bit mono WAV as float32 in [-1, 1], and its sample rate."""
+    with wave.open(str(path), "rb") as w:
+        if w.getnchannels() != 1 or w.getsampwidth() != 2:
+            raise ValueError(f"{Path(path).name}: expected 16-bit mono WAV")
+        rate = w.getframerate()
+        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
+    return (pcm.astype(np.float32) / 32768.0), rate
+
+
 class WhisperCppStt:
     """``whisper-cli -m MODEL -t N -ac CTX -nt -ojf -of BASE -f clip.wav``.
 

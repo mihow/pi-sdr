@@ -24,7 +24,7 @@ from . import IQ_RATE, rollup
 from .bandplan import BandPlan
 from .clock import Clock
 from .config import Config
-from .detect import HopResult, SpurMap, analyze, analyze_psd, clip_fraction
+from .detect import HopResult, SpurMap, analyze, analyze_psd
 from .dsp.channelizer import Channelizer
 from .iq.base import IqSource, IqSourceError
 from .scheduler import CALIBRATE, DWELL, IDLE, SURVEY, Job, Scheduler
@@ -179,7 +179,7 @@ class Runner:
         self._tuner = {"center_hz": int(job.center_hz), "kind": job.kind.lower()}
         if job.kind == SURVEY:
             r = self._measure(job.center_hz, int(job.duration_s * self.rate))
-            self._survey_result(r, "survey")
+            self.ingest_hop(r, "survey")
         elif job.kind == CALIBRATE:
             r = self._measure(job.center_hz, int(job.duration_s * self.rate))
             t = self.clock.now()
@@ -200,7 +200,9 @@ class Runner:
             iq = self.source.read(n)
         return analyze(iq, center, self.rate, self.plan, d)
 
-    def _survey_result(self, r: HopResult, source: str) -> None:
+    def ingest_hop(self, r: HopResult, source: str) -> None:
+        """Track the peaks of one analyzed hop at the clock's time; ``source`` is "survey"
+        or "dwell". The scan loop and ``sdrscan digest --events`` both feed hops here."""
         t = self.clock.now()
         self.status["last_clip_frac"] = r.clip_frac
         self.spurs.update(r, t)
@@ -230,10 +232,9 @@ class Runner:
             else:
                 iq = self.source.read(n)
                 r = analyze(iq, job.center_hz, self.rate, self.plan, self.cfg.detect)
-                r.clip_frac = clip_fraction(iq, self.cfg.detect.clip_level)
                 if self._channelizer is not None and voice:
                     self._audio(self._channelizer.push(iq))
-            self._survey_result(r, "dwell")
+            self.ingest_hop(r, "dwell")
 
     def _audio(self, chunks: dict[int, np.ndarray]) -> None:
         """Feed each active channel's audio to its gate and, while it may be voice, a clip."""

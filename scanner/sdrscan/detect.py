@@ -38,6 +38,45 @@ class HopResult:
     hi_hz: int = 0
     threshold_db: float = 10.0  # offset used at the hop center
 
+    def to_record(self) -> dict:
+        """The JSON form a detections file holds (one line per hop)."""
+        return {
+            "center_hz": self.center_hz,
+            "lo_hz": self.lo_hz,
+            "hi_hz": self.hi_hz,
+            "floor_db": round(self.floor_db, 2),
+            "mad_db": round(self.mad_db, 2),
+            "threshold_db": self.threshold_db,
+            "clip_frac": round(self.clip_frac, 5),
+            "peaks": [
+                {
+                    "hz": round(p.hz, 1),
+                    "width_hz": round(p.width_hz, 1),
+                    "level_db": round(p.level_db, 2),
+                    "snr_db": round(p.snr_db, 2),
+                }
+                for p in self.peaks
+            ],
+        }
+
+    @classmethod
+    def from_record(cls, rec: dict) -> HopResult:
+        """Rebuild a hop from ``to_record`` output. Occupancy is not kept in the record."""
+        return cls(
+            peaks=[
+                Peak(hz=p["hz"], width_hz=p["width_hz"], level_db=p["level_db"], snr_db=p["snr_db"])
+                for p in rec["peaks"]
+            ],
+            floor_db=rec["floor_db"],
+            mad_db=rec["mad_db"],
+            clip_frac=rec["clip_frac"],
+            occupancy={},
+            center_hz=int(rec["center_hz"]),
+            lo_hz=int(rec["lo_hz"]),
+            hi_hz=int(rec["hi_hz"]),
+            threshold_db=rec["threshold_db"],
+        )
+
 
 def clip_fraction(iq: np.ndarray, level: float) -> float:
     rail = (np.abs(iq.real) >= level) | (np.abs(iq.imag) >= level)
