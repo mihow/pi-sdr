@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from sdrscan import AUDIO_RATE
 from sdrscan.voice.gate import VoiceGate, VoiceState
 
-from .audio import dtmf, fm_noise, voice
+from .audio import afsk, ctcss, dtmf, fm_noise, voice
 
 
 def _push_all(gate: VoiceGate, pcm: np.ndarray, chunk: int) -> VoiceState:
@@ -62,3 +63,43 @@ def test_reset_clears_the_state():
 
 def test_gate_rate_is_the_audio_rate():
     assert VoiceGate().rate == AUDIO_RATE
+
+
+def test_voice_under_a_stronger_ctcss_tone_is_voice():
+    """A repeater's sub-audible tone must not outvote the speech it rides under."""
+    speech = voice(1.5)
+    tone = ctcss(1.5)
+    assert tone.std() > 3 * speech.std()  # the tone carries most of the energy, as on air
+    gate = VoiceGate()
+    assert _push_all(gate, speech + tone, 1600) is VoiceState.VOICE
+    assert gate.summary()["class"] == "voice"
+
+
+@pytest.mark.parametrize("hz", [67.0, 107.2, 254.1])
+def test_ctcss_tone_alone_is_not_voice(hz):
+    """A squelch tail or kerchunk carries the tone and nothing else: no clip, no transcript."""
+    gate = VoiceGate()
+    assert _push_all(gate, ctcss(1.5, hz=hz), 1600) is VoiceState.NOISE
+    assert gate.summary()["class"] == "unknown"
+
+
+def test_ctcss_tone_over_fm_noise_is_not_voice():
+    gate = VoiceGate()
+    assert _push_all(gate, fm_noise(1.5) + ctcss(1.5), 1600) is VoiceState.NOISE
+
+
+def test_dtmf_under_ctcss_is_data():
+    """Tone signalling in the voice band stays data when a CTCSS tone is added."""
+    gate = VoiceGate()
+    assert _push_all(gate, dtmf(1.5) + ctcss(1.5), 1600) is VoiceState.DATA
+    assert gate.summary()["class"] == "data"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="The tone test finds one or two pure tones; 1200-baud AFSK is wider and reads as voice",
+)
+@pytest.mark.parametrize("with_ctcss", [False, True])
+def test_afsk_1200_is_data(with_ctcss):
+    pcm = afsk(1.5) + (ctcss(1.5) if with_ctcss else 0)
+    assert _push_all(VoiceGate(), pcm, 1600) is VoiceState.DATA

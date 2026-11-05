@@ -4,6 +4,13 @@ Only speech is worth a clip and a transcript, so the gate decides what the rig k
 works on 30 ms frames at ``AUDIO_RATE`` and keeps its frames across ``push`` calls, so audio
 arriving in small pieces still reaches a decision (v1 reset per 27 ms read and never did).
 
+The gate first high-passes its input so that only the voice band is measured (the filter
+passes from about 350 Hz). Repeaters send a CTCSS tone (67 to 254.1 Hz) or a DCS code
+(134.4 bit/s) under the speech, and that tone often carries most of the demodulated energy.
+Without the filter, the tone test below counts the tone and labels speech as data. A frame
+with only sub-audible content is then below ``SILENCE_RMS``, so a squelch tail or kerchunk
+is not voice.
+
 A frame is voice when webrtcvad (mode 2) votes speech AND the frame is pitched
 (autocorrelation above 0.2 at 80 to 400 Hz) or not flat (spectral flatness below 0.35),
 AND its energy is not held by one or two pure tones. A frame whose energy is in one or two
@@ -22,6 +29,7 @@ import enum
 import typing
 
 import numpy as np
+from scipy.signal import cheby2, sosfilt, sosfilt_zi
 
 from .. import AUDIO_RATE
 
@@ -32,6 +40,10 @@ VOICE_SHARE = 0.30
 DATA_SHARE = 0.50
 MIN_FRAMES = 10
 SILENCE_RMS = 1e-3  # demodulated audio is scaled to about [-1, 1]
+# High-pass: at least 60 dB down from 260 Hz (the highest CTCSS tone is 254.1 Hz), within
+# 3 dB from about 350 Hz.
+SUBAUDIBLE_STOP_HZ = 260.0
+SUBAUDIBLE_STOP_DB = 60.0
 
 
 class VoiceState(enum.Enum):
@@ -95,11 +107,15 @@ class VoiceGate:
         self._band = (freqs >= 300) & (freqs <= 3400)
         self._lag_lo = rate // 400
         self._lag_hi = rate // 80
+        self._sos = cheby2(
+            10, SUBAUDIBLE_STOP_DB, SUBAUDIBLE_STOP_HZ, btype="highpass", fs=rate, output="sos"
+        )
         self.reset()
 
     def reset(self) -> None:
         """Forget everything. Call only when a transmission ends."""
         self._buf = np.zeros(0, dtype=np.float32)
+        self._zi: np.ndarray | None = None
         self._recent: collections.deque[str] = collections.deque(maxlen=self.window)
         self._counts: collections.Counter[str] = collections.Counter()
         self._flat_sum = 0.0
@@ -112,7 +128,7 @@ class VoiceGate:
             self._vad_mod.set_mode(self._vad, 2)
 
     def push(self, pcm: np.ndarray) -> VoiceState:
-        data = np.concatenate((self._buf, np.asarray(pcm, dtype=np.float32)))
+        data = np.concatenate((self._buf, self._highpass(pcm)))
         n = len(data) // self.frame
         for i in range(n):
             label = self._classify(data[i * self.frame : (i + 1) * self.frame])
@@ -154,6 +170,17 @@ class VoiceGate:
         if recent["voice"] / k >= VOICE_SHARE:
             return VoiceState.VOICE
         return VoiceState.NOISE
+
+    def _highpass(self, pcm: np.ndarray) -> np.ndarray:
+        """Remove sub-audible tones; the filter state runs across ``push`` calls."""
+        x = np.asarray(pcm, dtype=np.float64)
+        if not len(x):
+            return np.zeros(0, dtype=np.float32)
+        if self._zi is None:
+            # Start from a steady state on the first sample so a DC offset does not ring.
+            self._zi = sosfilt_zi(self._sos) * x[0]
+        y, self._zi = sosfilt(self._sos, x, zi=self._zi)
+        return y.astype(np.float32)
 
     def _classify(self, f: np.ndarray) -> str:
         x = f.astype(np.float64)

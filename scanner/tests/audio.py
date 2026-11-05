@@ -31,3 +31,18 @@ def fm_noise(seconds: float, seed: int = 1) -> np.ndarray:
 def dtmf(seconds: float, lo: float = 697.0, hi: float = 1209.0) -> np.ndarray:
     t = np.arange(int(seconds * AUDIO_RATE)) / AUDIO_RATE
     return (0.4 * np.sin(2 * np.pi * lo * t) + 0.4 * np.sin(2 * np.pi * hi * t)).astype(np.float32)
+
+
+def ctcss(seconds: float, hz: float = 107.2, amp: float = 0.3) -> np.ndarray:
+    """A CTCSS sub-audible tone, by default louder than ``voice`` (as on a real repeater)."""
+    t = np.arange(int(seconds * AUDIO_RATE)) / AUDIO_RATE
+    return (amp * np.sin(2 * np.pi * hz * t)).astype(np.float32)
+
+
+def afsk(seconds: float, baud: int = 1200, seed: int = 3) -> np.ndarray:
+    """Bell 202 AFSK: continuous-phase 1200 and 2200 Hz tones keyed by random bits."""
+    rng = np.random.default_rng(seed)
+    n = int(seconds * AUDIO_RATE)
+    bit = (np.arange(n) * baud // AUDIO_RATE).astype(int)
+    hz = np.where(rng.integers(0, 2, bit[-1] + 1)[bit] == 1, 1200.0, 2200.0)
+    return (0.4 * np.sin(2 * np.pi * np.cumsum(hz) / AUDIO_RATE)).astype(np.float32)

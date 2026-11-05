@@ -44,12 +44,12 @@
       }
     },
     {
-      "id": "koin_443150_ctcss_reads_as_data",
+      "id": "koin_443150_voice_under_ctcss",
       "file": "koin_443_150_60sec.cf32",
       "offset_s": 46.0,
       "seconds": 2.0,
       "sha256": "1c032fc4a1738240023b7675c8ef3e4c69fd6e71d3209d23e34c6b916a3180c5",
-      "notes": "The repeater sends a 107.2 Hz CTCSS tone under the speech. The gate's tone test counts it, so stretches of this conversation read as data. A high-pass below 300 Hz before the tone test is the likely fix; the scan loop is unchanged here.",
+      "notes": "The repeater sends a 107.2 Hz CTCSS tone under the speech, and the tone holds most of the demodulated energy. The gate high-passes its input at the voice-band edge, so this stretch reads as voice, not data.",
       "expect": {
         "detect": {
           "channels": [
@@ -65,8 +65,7 @@
             "hz": 443150000,
             "mode": null,
             "class": "voice",
-            "min_voice_s": 0.5,
-            "xfail": "CTCSS tone makes the gate call speech data"
+            "min_voice_s": 0.5
           }
         ]
       }

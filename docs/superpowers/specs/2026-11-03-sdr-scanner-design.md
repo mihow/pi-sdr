@@ -277,7 +277,9 @@ the top 3 tracks in the window.
 ### 5.9 VoiceGate (`voice/gate.py`) and SttEngine (`voice/stt.py`)
 
 The gate classifies squelch-open audio as `voice`, `data`, `carrier` or `noise`. It keeps at
-least 10 frames of 30 ms (300 ms) across reads and never resets per read. A frame is voice
+least 10 frames of 30 ms (300 ms) across reads and never resets per read. It first
+high-passes the audio (60 dB down from 260 Hz) so a repeater's CTCSS tone or DCS code does
+not read as data. A frame is voice
 when webrtcvad (mode 2) votes speech AND (pitch autocorrelation > 0.2 at 80 to 400 Hz OR
 spectral flatness < 0.35). A segment is voice when at least 30% of frames in a 30-frame
 window are voice. These thresholds come from v1 and are untuned. A Silero VAD backend can
