@@ -39,9 +39,8 @@ from .voice.gate import Gate, VoiceGate, VoiceState
 BACKOFF_START_S = 5.0
 BACKOFF_MAX_S = 300.0
 # Consecutive failed opens (5 + 10 + 20 + 40 s, about 75 s of backoff) before the runner
-# gives up. A short outage on the same node is ridden out in-process. After a USB reset the
-# dongle comes back at a new node, which the container cannot see (deploy/sdrscan-run passes
-# only the node present at start), so exiting soon lets systemd restart on the new node.
+# gives up when the node still exists (for example the device is busy). When libusb reports
+# the node gone, the runner gives up at once instead; see _node_gone.
 MAX_OPEN_FAILURES = 5
 MAX_UNVISITED_S = 900.0  # longer than a tier B pass, so tier B tracks are not cut short
 PRUNE_EVERY_S = 86400.0
@@ -62,6 +61,17 @@ def tx_class(summary: dict, dur_ms: int, keyup_max_s: float) -> str:
     if cls in ("voice", "data"):
         return cls
     return "keyup" if dur_ms <= keyup_max_s * 1000 else cls
+
+
+def _node_gone(exc: Exception) -> bool:
+    """True when libusb says the device node no longer exists.
+
+    The container is given only the node present at start, and a reset dongle re-enumerates
+    at a new node, so this error never clears in-process; retrying would only delay the
+    restart that finds the new node.
+    """
+    text = str(exc)
+    return "LIBUSB_ERROR_NO_DEVICE" in text or "No such device" in text
 
 
 class DongleLost(RuntimeError):
@@ -353,7 +363,7 @@ class Runner:
         except IqSourceError as exc:
             self._fail(exc, opened=False)
             self.open_failures += 1
-            if self.open_failures >= MAX_OPEN_FAILURES:
+            if _node_gone(exc) or self.open_failures >= MAX_OPEN_FAILURES:
                 raise DongleLost(
                     f"the radio failed to open {self.open_failures} times: {exc}"
                 ) from exc

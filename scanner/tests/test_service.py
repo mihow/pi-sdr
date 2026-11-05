@@ -152,13 +152,16 @@ class _WatchedClock:
 
 
 class _DeadDongle:
+    """A dongle that is present but cannot be claimed (busy, -6), so retrying can help."""
+
     opens = 0
+    error = "usb_claim_interface error -6"
 
     def open(self) -> None:
         from sdrscan.iq.base import IqSourceError
 
         self.opens += 1
-        raise IqSourceError("usb_claim_interface error -4")
+        raise IqSourceError(self.error)
 
     def close(self) -> None:
         pass
@@ -187,6 +190,28 @@ def test_a_lost_dongle_backs_off_without_tripping_the_watchdog_then_exits_cleanl
     assert codes == [], "the watchdog fired during a deliberate backoff"
     assert src.opens == MAX_OPEN_FAILURES
     assert svc.runner.status["mode"] == "no_dongle"
+    svc.shutdown()
+
+
+def test_a_vanished_dongle_node_exits_on_the_first_failed_open(tmp_path, vclock, sys_root):
+    """The container holds only the node present at start. LIBUSB_ERROR_NO_DEVICE means that
+    node is gone (a reset re-enumerates the dongle at a new node), so retrying cannot help:
+    exit at once and let systemd restart the wrapper on the new node."""
+    from sdrscan.runner import DongleLost
+
+    src = _DeadDongle()
+    src.error = (
+        "cannot open RTL-SDR: <LIBUSB_ERROR_NO_DEVICE (-4): No such device "
+        '(it may have been disconnected)> "Could not open SDR (device index = 0)"'
+    )
+    svc = Service(
+        _plain_cfg(tmp_path), vclock, src, spectrum="iq", statvfs=FakeFs(0.5), sys_root=sys_root
+    )
+    t0 = vclock.now()
+    with pytest.raises(DongleLost):
+        svc.run(until=t0 + 3600)
+    assert src.opens == 1
+    assert vclock.now() - t0 < 60
     svc.shutdown()
 
 
