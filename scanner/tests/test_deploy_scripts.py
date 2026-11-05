@@ -106,7 +106,9 @@ def test_unit_has_no_audio_access_and_no_ordering_on_other_services():
         '--memory "$MEMORY"',
         "--cpus 2",
         "--read-only",
-        "--tmpfs /run/sdrscan:size=64m",
+        # Owned by the image's sdrscan user (uid 999): clips are staged here before encoding,
+        # and a root-owned tmpfs made the first recorded clip crash the scanner.
+        "--tmpfs /run/sdrscan:size=64m,uid=999,gid=999,mode=0700",
     ):
         assert flag in wrapper, flag
     settings = [line.split("=")[0] for line in unit.splitlines() if not line.startswith("#")]
