@@ -45,6 +45,54 @@ transcripts (from a stub engine). On the x86 build host one simulated hour takes
 Browser checks need Playwright (`pip install -e '.[browser]'` and
 `python -m playwright install webkit`). Set `SDRSCAN_CHROME` to use a local Chrome.
 
+## Testing a stage from a file
+
+Each pipeline stage is also a command that reads one file and writes one. The commands call
+the same code as the running service, so a stage can be checked on a recording without the
+rest of the pipeline. Every JSON record carries a `schema` field such as
+`sdrscan.detections/1`.
+
+| Stage | Command | Reads | Writes |
+|---|---|---|---|
+| capture | `sdrscan capture` | the RTL-SDR | `.cu8` or `.cf32` and a JSON sidecar |
+| detect | `sdrscan detect` | an IQ file | detections JSONL, one 100 ms hop per line |
+| demod | `sdrscan demod` | an IQ file, `--freq`, optional `--mode` | 16 kHz mono WAV |
+| gate | `sdrscan gate` | a WAV | segments JSONL (voice, data, noise) and a summary |
+| stt | `sdrscan stt` | a WAV | transcript JSON |
+| digest | `sdrscan digest --events` (or `--db`) | detections JSONL (or the database) | `digest.json` |
+| dashboard | `sdrscan dashboard` | `digest.json.gz` | `index.html` |
+
+IQ files can be rtl_sdr raw 8-bit (`.cu8`, `.raw`), `.cf32` or SigMF. A non-SigMF file needs
+a JSON sidecar with the same stem that gives the sample rate and center frequency
+(`rate`/`center_hz` or `sample_rate`/`center_freq_hz`); gain is optional. `--offset` and
+`--seconds` pick a slice of a large file.
+
+```bash
+sdrscan capture --freq 443.15M --seconds 10 --gain 30 --out cap.cu8   # needs the dongle
+sdrscan corpus cut --src big.cf32 --offset 0 --seconds 2 --out cap.cu8   # or slice a recording
+sdrscan detect --iq cap.cu8 --out det.jsonl          # prints the channels heard
+sdrscan demod --iq cap.cu8 --freq 443.15M --out ch.wav
+sdrscan gate --wav ch.wav --out seg.jsonl            # prints the class: voice, data or unknown
+sdrscan stt --wav ch.wav --binary whisper-cli --model ggml-base.en-q5_1.bin --out tr.json
+sdrscan digest --events det.jsonl --out www && sdrscan dashboard --digest www/digest.json.gz --out www
+```
+
+`digest --events` replays the detections through the tracker as one dwell, so voice class
+stays `unknown`; that needs the gate.
+
+Real recordings stay out of the repository. `tests/corpus/manifest.json` lists clips by
+their path relative to a capture directory, the slice, the sha256 of the slice's bytes and
+the expected stage results. Set `SDRSCAN_IQ_CORPUS` to your capture directory to run them:
+
+```bash
+SDRSCAN_IQ_CORPUS=/path/to/captures .venv/bin/python -m pytest -q -m corpus
+```
+
+Without the variable these tests skip. A missing file or changed bytes skips that clip and
+says which. To add a clip, run `sdrscan corpus cut` on it (it prints the source sha256),
+run the stages, and write assertions that are robust: presence, absence, class and
+frequency within a tolerance, not exact counts.
+
 ## Data budget
 
 All figures are measured on the build host with the test fixtures, except the TLS

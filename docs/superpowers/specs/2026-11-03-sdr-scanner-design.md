@@ -148,7 +148,9 @@ class IqSource(typing.Protocol):
   60 ms when the retune crosses the V4 input-switch boundaries at 28.8 MHz and 250 MHz. Gain
   is always manual, from the band plan. AGC is never used, because it makes dB values
   incomparable between hours.
-- `FileSource` replays `.cf32` files with a JSON sidecar (rate, center, gain).
+- `FileSource` replays recorded IQ through one memory-mapped reader (`iq/file.py`): rtl_sdr
+  `.cu8`/`.raw`, `.cf32` and SigMF, with a JSON sidecar in either the scanner's keys (rate,
+  center, gain) or the older capture scripts' keys. Gain may be missing.
 - `SyntheticSource` generates IQ from a scene description (section 13).
 
 ### 5.4 BandPlan and channel model (`bandplan.py`, `data/bandplan_us.yaml`)
@@ -384,6 +386,8 @@ sdrscan digest   --db PATH --out DIR
 sdrscan dashboard --digest PATH --out DIR            # builds static index.html
 sdrscan bench                                        # hop ms, demod ms/channel, VAD ms/frame
 sdrscan health
+sdrscan capture | detect | demod | gate | stt        # one file in, one file out (section 14)
+sdrscan corpus cut --src PATH --out CLIP.cu8         # slice a short clip from a capture
 ```
 
 ## 6. Data flow
@@ -686,10 +690,14 @@ Use the cheapest tier that answers the question.
    and duration within 2 s; carriers and spurs never appear in "busiest"; a channel added on
    day 6 appears in "new"; a 5x burst at 03:00 appears in "unusual"; the dwell share stays at
    or below 40%; tier A revisit is at most 20 s.
-3. **Recorded IQ** (optional): `FileSource` replays short slices of existing SDRplay
-   captures. Paths come from an environment variable; tests skip when it is unset. Fixtures
-   are never committed. These are not 8-bit RTL captures, so thresholds still need a check
-   on a real V4.
+3. **Stage tests and recorded IQ**: every stage is a command and a function that reads one
+   file and writes one (`sdrscan capture`, `detect`, `demod`, `gate`, `stt`, `digest
+   --events`, `dashboard`; code in `stages.py`). Each stage has tests on small synthetic
+   files, with a noise-in, nothing-out case. `tests/corpus/manifest.json` names two-second
+   slices of real SDRplay and RTL-SDR V4 captures by relative path and sha256, with expected
+   results (presence, absence, class, frequency within a tolerance). The tests read
+   `SDRSCAN_IQ_CORPUS` and skip when it is unset or a clip is missing or changed. Recordings
+   are never committed.
 4. **Journeys**: storage against a tiny quota and fake `statvfs`; failure injection (source
    raises mid-read then recovers, thermal file steps 60 to 85 °C, clock jumps of -2 h and
    +3 days, uplink returns 500 or times out, full disk); uplink against a local stdlib HTTP
