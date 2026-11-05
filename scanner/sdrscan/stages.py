@@ -31,6 +31,7 @@ from .detect import HopResult, analyze
 from .dsp.channelizer import Channelizer
 from .iq.base import IqSource, IqSourceError
 from .iq.file import IqFile, IqWriter
+from .runner import Runner
 from .store import Store
 from .voice.gate import Gate, VoiceGate, VoiceState
 from .voice.stt import SttEngine
@@ -275,8 +276,6 @@ def replay_detections(
     hops count as dwell readings by default. Voice class stays ``unknown``: that needs the
     gate, which reads audio, not detections.
     """
-    from .runner import Runner  # the runner imports this module's neighbours, not this one
-
     t0 = clock.now()  # ``t_s`` 0 of the detections; ``store`` must share this clock
     runner = Runner(cfg=cfg, plan=plan, source=_NoRadio(), clock=clock, store=store)
     for rec in records:
