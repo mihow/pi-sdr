@@ -173,7 +173,10 @@ class HealthMonitor:
             flags.append("clock_unsynced")
         st = self._status()
         if st.get("mode") == "no_dongle" and "no_dongle" not in flags:
+            # Listed in sysfs but unreadable: after a USB reset the dongle comes back at a new
+            # node while the scanner still holds the old one, so it is not OK.
             flags.append("dongle_busy")
+            dongle = False
         flags += _throttle_flags(throttled)
         flags.extend(f for f in self._extra_flags() if f not in flags)
         db = self.cfg.data_root / "db" / "scan.sqlite"

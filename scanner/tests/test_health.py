@@ -128,3 +128,17 @@ def test_a_past_brown_out_is_reported_but_does_not_hold_the_governor(sys_root, v
     h = hm.sample()
     assert hm.mode() == "normal"
     assert "power_fault_since_boot" in h.flags and "under_voltage" not in h.flags
+
+
+def test_dongle_present_but_unreadable_is_not_ok(sys_root, vclock, tmp_path):
+    # After a USB reset the dongle re-enumerates at a new node, so sysfs still lists it, but
+    # the scanner holds the old node and every read fails. Health must not report it as OK.
+    _usb(sys_root)
+    _temp(sys_root, 50)
+    status = {"mode": "normal"}
+    hm = _monitor(sys_root, vclock, tmp_path, status=lambda: status)
+    assert hm.sample().dongle_ok is True
+    status["mode"] = "no_dongle"
+    h = hm.sample()
+    assert h.dongle_ok is False
+    assert "dongle_busy" in h.flags
