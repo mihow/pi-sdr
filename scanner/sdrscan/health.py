@@ -236,6 +236,10 @@ class HealthMonitor:
         if now_bits:
             self._level = max(self._level, 2)
 
+    def read_temp(self) -> float | None:
+        """A fresh SoC temperature in °C (the sensor vcgencmd reads), or None."""
+        return self._temp()
+
     def _temp(self) -> float | None:
         p = self.sys_root / "class/thermal/thermal_zone0/temp"
         try:

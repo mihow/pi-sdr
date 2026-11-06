@@ -4,8 +4,10 @@ catch-up after downtime, and state that must survive a restart."""
 from __future__ import annotations
 
 import dataclasses
+import types
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from sdrscan.config import load_config
@@ -322,4 +324,26 @@ def test_auto_speech_to_text_without_a_choice_falls_back_and_says_so(
         svc._on_tx(i + 1, tx, np.zeros(16_000))
     svc._drain_stt()
     assert built == ["whisper_cpp"]  # loaded once, not per clip
+    svc.shutdown()
+
+
+def test_speech_to_text_waits_while_the_soc_is_hot(tmp_path, vclock, sys_root):
+    """Transcription is the rig's biggest heat source and can wait; recording cannot. The
+    worker reads the temperature fresh before each clip and holds the queue at or above
+    thermal.hot_c, because the 30 s health sample misses short per-clip spikes."""
+    from sdrscan.voice.stt import FakeStt
+
+    zone = sys_root / "class/thermal/thermal_zone0"
+    zone.mkdir(parents=True, exist_ok=True)
+    cfg = _plain_cfg(tmp_path)
+    stt = FakeStt(["unit two", "unit three"])
+    svc = _service(cfg, vclock, sys_root, inline_stt=True, stt=stt)
+    (zone / "temp").write_text(f"{int((cfg.thermal.hot_c + 2) * 1000)}\n")
+    tx = types.SimpleNamespace(clip_id=1, hz=462_550_000, band="gmrs_frs_462")
+    svc._on_tx(1, tx, np.zeros(16_000))
+    svc._drain_stt()
+    assert svc._stt_q.qsize() == 1, "a hot SoC must hold the clip in the queue"
+    (zone / "temp").write_text(f"{int((cfg.thermal.hot_c - 10) * 1000)}\n")
+    svc._drain_stt()
+    assert svc._stt_q.qsize() == 0, "once cool, the queued clip is transcribed"
     svc.shutdown()

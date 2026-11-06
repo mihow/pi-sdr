@@ -47,6 +47,7 @@ from .voice.stt import NullStt, SttEngine, make_stt, select_stt
 
 log = logging.getLogger("sdrscan.service")
 STT_MAX_S = 30.0
+STT_HOT_WAIT_S = 10.0  # how often a held transcription re-reads the temperature
 HOUR_GRACE_S = 5.0  # let transmissions that end on the boundary close first
 WATCHDOG_S = 120.0
 WATCHDOG_EXIT = 70
@@ -364,8 +365,19 @@ class Service:
         )
         self.clips.set_tier(clip_id, {"class": "voice", "confidence": tr.confidence})
 
+    def _stt_too_hot(self) -> bool:
+        """A fresh SoC reading at or above thermal.hot_c holds transcription.
+
+        Read here, not from the 30 s health sample: whisper runs per clip, so the heat comes
+        in short spikes that the periodic sample misses. Recording carries on regardless.
+        """
+        temp = self.health.read_temp()
+        return temp is not None and temp >= self.cfg.thermal.hot_c
+
     def _drain_stt(self) -> None:
         while True:
+            if self._stt_too_hot():
+                return
             try:
                 item = self._stt_q.get_nowait()
             except queue.Empty:
@@ -376,6 +388,8 @@ class Service:
         lower_this_thread()  # whisper-cli inherits nice 19 from this thread
         while True:
             item = self._stt_q.get()
+            while self._stt_too_hot():
+                self.clock.sleep(STT_HOT_WAIT_S)
             try:
                 self._transcribe(item)
             except Exception:  # noqa: BLE001 - a failed transcript must not stop the worker
