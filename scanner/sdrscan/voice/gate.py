@@ -16,8 +16,14 @@ A frame is voice when webrtcvad (mode 2) votes speech AND the frame is pitched
 (autocorrelation above 0.2 at 80 to 400 Hz) or not flat (spectral flatness below 0.35),
 AND its energy is not held by one or two pure tones. A frame whose energy is in one or two
 tones is data (DTMF, tone signalling). Over the last ``window`` frames, at least 30% voice
-frames means VOICE and at least 50% tone frames means DATA. The thresholds come from v1 and
-are untuned on real audio.
+frames means VOICE and at least 50% tone frames means DATA. The frame thresholds come from v1
+and are untuned on real audio.
+
+Speech also rises and falls with its syllables, so VOICE needs a varying envelope too: the
+spread (standard deviation) of log frame RMS over the sounded frames must be at least
+``ENVELOPE_MIN``. A steady hum from nearby electronics passes every frame test, but its
+envelope is flat. Measured on field clips: hum 0.05 to 0.06, speech 0.20 or more in every
+0.9 s window and 0.62 to 0.84 over a whole transmission.
 
 The runner reaches a gate only through ``Gate``. ``AlwaysNoiseGate`` records nothing and
 remains for tests that need a gate with no opinion.
@@ -39,6 +45,7 @@ PITCH_MIN = 0.2
 FLATNESS_MAX = 0.35
 TONAL_MIN = 0.80
 VOICE_SHARE = 0.30
+ENVELOPE_MIN = 0.15  # spread of log frame RMS; a steady hum is about 0.05, speech 0.2 or more
 DATA_SHARE = 0.50
 MIN_FRAMES = 10
 SILENCE_RMS = 1e-3  # demodulated audio is scaled to about [-1, 1]
@@ -123,6 +130,11 @@ class VoiceGate:
         self._counts: collections.Counter[str] = collections.Counter()
         self._flat_sum = 0.0
         self._pitch_hits = 0
+        self._last_rms = 0.0
+        self._recent_lr: collections.deque[float] = collections.deque(maxlen=self.window)
+        self._lr_n = 0
+        self._lr_sum = 0.0
+        self._lr_sq = 0.0
         self._state = VoiceState.PENDING
         self._tone.reset()
         self._vad = None
@@ -138,6 +150,12 @@ class VoiceGate:
         for i in range(n):
             label = self._classify(data[i * self.frame : (i + 1) * self.frame])
             self._recent.append(label)
+            if label != "silent":
+                lr = float(np.log(self._last_rms))
+                self._recent_lr.append(lr)
+                self._lr_n += 1
+                self._lr_sum += lr
+                self._lr_sq += lr * lr
             self._counts[label] += 1
         self._buf = data[n * self.frame :]
         if n:
@@ -153,7 +171,7 @@ class VoiceGate:
         if frames >= MIN_FRAMES:
             if self._counts["data"] / frames >= DATA_SHARE:
                 cls = "data"
-            elif ratio >= VOICE_SHARE:
+            elif ratio >= VOICE_SHARE and (self._envelope_std() or 0.0) >= ENVELOPE_MIN:
                 cls = "voice"
         return {
             "class": cls,
@@ -162,6 +180,7 @@ class VoiceGate:
             "flatness": round(self._flat_sum / measured, 3) if measured else None,
             "pitch_hits": self._pitch_hits,
             "state": self._state.value,
+            "envelope_std": self._envelope_std(),
             "silent_share": round(self._counts["silent"] / frames, 3) if frames else None,
             "ctcss_hz": self._tone.tone_hz(),
         }
@@ -174,9 +193,17 @@ class VoiceGate:
         k = len(self._recent)
         if recent["data"] / k >= DATA_SHARE:
             return VoiceState.DATA
-        if recent["voice"] / k >= VOICE_SHARE:
-            return VoiceState.VOICE
+        if recent["voice"] / k >= VOICE_SHARE and len(self._recent_lr) >= MIN_FRAMES:
+            if float(np.std(self._recent_lr)) >= ENVELOPE_MIN:
+                return VoiceState.VOICE
         return VoiceState.NOISE
+
+    def _envelope_std(self) -> float | None:
+        """Spread of log frame RMS over all sounded frames so far, or None before any."""
+        if self._lr_n < 2:
+            return None
+        mean = self._lr_sum / self._lr_n
+        return round(max(0.0, self._lr_sq / self._lr_n - mean * mean) ** 0.5, 3)
 
     def _highpass(self, pcm: np.ndarray) -> np.ndarray:
         """Remove sub-audible tones; the filter state runs across ``push`` calls."""
@@ -193,6 +220,7 @@ class VoiceGate:
         x = f.astype(np.float64)
         x -= x.mean()
         rms = float(np.sqrt(np.mean(x * x)))
+        self._last_rms = rms
         if rms < SILENCE_RMS:
             return "silent"
         p = np.abs(np.fft.rfft(x * self._win)) ** 2

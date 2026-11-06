@@ -103,3 +103,29 @@ def test_dtmf_under_ctcss_is_data():
 def test_afsk_1200_is_data(with_ctcss):
     pcm = afsk(1.5) + (ctcss(1.5) if with_ctcss else 0)
     assert _push_all(VoiceGate(), pcm, 1600) is VoiceState.DATA
+
+
+def _steady_buzz(seconds: float, f0: float = 120.0) -> np.ndarray:
+    """A pitched, formant-shaped hum at constant level: voice-like frames, no syllables.
+
+    Field rigs hear this from nearby electronics on VHF low band. Frame by frame it passes
+    every voice test (VAD, pitch, flatness), so only its flat envelope gives it away.
+    """
+    t = np.arange(int(seconds * AUDIO_RATE)) / AUDIO_RATE
+    x = voice(seconds, f0=f0) / (0.55 + 0.45 * np.sin(2 * np.pi * 3.0 * t) ** 2)
+    rng = np.random.default_rng(3)
+    return (0.6 * x + 0.01 * rng.normal(size=len(x))).astype(np.float32)
+
+
+def test_steady_buzz_with_voice_like_frames_is_not_voice():
+    gate = VoiceGate()
+    assert _push_all(gate, _steady_buzz(3.0), 1600) is VoiceState.NOISE
+    s = gate.summary()
+    assert s["class"] != "voice"
+    assert s["envelope_std"] < 0.15
+
+
+def test_voice_reports_a_syllabic_envelope():
+    gate = VoiceGate()
+    _push_all(gate, voice(3.0), 1600)
+    assert gate.summary()["envelope_std"] >= 0.15
