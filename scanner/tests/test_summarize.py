@@ -215,3 +215,19 @@ def test_pipeline_counts_every_stage(week):
     assert day["callsigns"] >= len(d["windows"]["day"]["calls"])
     assert day["push_kb"] == round(23 * 7.4)
     assert d["windows"]["all"]["pipeline"]["survey_hops"] == wk["survey_hops"]
+
+
+def test_digest_survives_a_band_plan_that_lost_bands(week, tmp_path):
+    # Rows recorded under a full band plan stay in the store after a switch to a smaller plan
+    # (for example a GMRS-only watch). Building the digest must not crash on band ids the
+    # current plan no longer has; it names them by id.
+    store, _ = week
+    small = tmp_path / "small.yaml"
+    small.write_text(
+        "defaults: {mode: nfm, raster_hz: 12500, bw_hz: 12500, tier: A, policy: dwell}\n"
+        "bands:\n"
+        "  - {id: gmrs_frs_462, name: GMRS/FRS 462, lo_hz: 462_537_500, hi_hz: 462_737_500}\n"
+    )
+    d = build_digest(store, weekgen.fake_health(), END, plan=BandPlan.load(small), site_id="site")
+    assert d["band_names"], "bands from the older rows are still named"
+    assert all(isinstance(v, str) and v for v in d["band_names"].values())

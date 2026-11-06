@@ -240,7 +240,10 @@ class Tracker:
         """
         if ch.hz in self._duty:
             return ch
-        raster = self.plan.band(ch.band).raster_hz if ch.band != "unplanned" else 12_500
+        try:  # a channel restored from older rows can name a band the plan no longer has
+            raster = self.plan.band(ch.band).raster_hz if ch.band != "unplanned" else 12_500
+        except KeyError:
+            raster = 12_500
         for other in (ch.hz - raster, ch.hz + raster):
             if other in self._duty and abs(hz - other) <= 0.75 * raster:
                 return self.plan.channel_for(other)

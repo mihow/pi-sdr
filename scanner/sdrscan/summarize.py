@@ -142,7 +142,12 @@ def build_digest(
         for hz in hz_seen:
             used_bands.add(plan.band_for(hz).id)
         for band in sorted(used_bands):
-            names[band] = plan.band(band).name or band
+            # Older rows can name bands the current plan no longer has (after a switch to a
+            # smaller plan); name those by id rather than failing the whole digest.
+            try:
+                names[band] = plan.band(band).name or band
+            except KeyError:
+                names[band] = band
         labels = {str(hz): plan.labels[hz] for hz in sorted(hz_seen) if hz in plan.labels}
         if labels:
             d["labels"] = labels
