@@ -1,0 +1,19 @@
+{
+  "archive": "archive",
+  "work": "work",
+  "output": "net-highlights.mp4",
+  "hz": 462550000,
+  "utc_offset_h": -7,
+  "picks": [
+    {"at": "19:00:35"},
+    {"at": "19:05:06", "keep_s": 20}
+  ],
+  "names_file": "names.txt",
+  "caption_fixes": [["\\bS[TD]-?550\\b", "550"]],
+  "titles": {
+    "title": "GMRS net  ·  462.550 MHz repeater",
+    "subtitle": "Thursday 5 Nov 2026  ·  7:00 pm MST  ·  recorded and transcribed by a Raspberry Pi scanner",
+    "spectrum_label": "0 - 4 kHz  ·  cleaned voice band",
+    "card": "Highlights  ·  personal names redacted"
+  }
+}
