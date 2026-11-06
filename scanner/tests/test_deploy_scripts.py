@@ -104,7 +104,7 @@ def test_unit_has_no_audio_access_and_no_ordering_on_other_services():
     for flag in (
         "--blkio-weight 100",
         '--memory "$MEMORY"',
-        "--cpus 2",
+        '--cpus "$CPUS"',
         "--read-only",
         # Owned by the image's sdrscan user (uid 999): clips are staged here before encoding,
         # and a root-owned tmpfs made the first recorded clip crash the scanner.
@@ -132,7 +132,7 @@ def _fake_usb(root: Path, devices: list[tuple[str, str, int, int]]) -> Path:
     return sysfs
 
 
-def _run_wrapper(tmp_path: Path, devices):
+def _run_wrapper(tmp_path: Path, devices, extra_env: dict[str, str] | None = None):
     sysfs = _fake_usb(tmp_path, devices)
     docker = tmp_path / "docker"
     docker.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$ARGS_OUT"\n')
@@ -145,6 +145,7 @@ def _run_wrapper(tmp_path: Path, devices):
         "SDRSCAN_DEV_STAT": "0",  # skip the device-node check, the fake tree has no /dev
         "SDRSCAN_NO_DONGLE_WAIT_S": "0",
         "ARGS_OUT": str(tmp_path / "args"),
+        **(extra_env or {}),
     }
     r = subprocess.run(
         ["bash", str(DEPLOY / "sdrscan-run")], env=env, capture_output=True, text=True
@@ -212,3 +213,12 @@ def test_progress_watchdog_exits_when_the_loop_is_stuck(tmp_path, vclock, sys_ro
     assert not svc.watchdog_check(codes.append)
     assert codes == [WATCHDOG_EXIT]
     svc.shutdown()
+
+
+def test_run_wrapper_cpu_cap_comes_from_the_env_file(tmp_path):
+    """A hot site lowers the CPU cap in docker.env; it must survive every container restart."""
+    dongle = [("0bda", "2838", 1, 7)]
+    _, args = _run_wrapper(tmp_path / "default", dongle)
+    assert args[args.index("--cpus") + 1] == "2"
+    _, args = _run_wrapper(tmp_path / "hot", dongle, {"SDRSCAN_CPUS": "1.0"})
+    assert args[args.index("--cpus") + 1] == "1.0"

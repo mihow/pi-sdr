@@ -13,6 +13,8 @@ DOCKER="${SDRSCAN_DOCKER:-/usr/bin/docker}"
 VENDOR="${SDRSCAN_USB_VENDOR:-0bda}"
 PRODUCT="${SDRSCAN_USB_PRODUCT:-2838}"
 MEMORY="${SDRSCAN_MEMORY:-1g}"
+# A hot site lowers this in /etc/sdrscan/docker.env (for example 1.0); see the thermal notes.
+CPUS="${SDRSCAN_CPUS:-2}"
 EXIT_NO_DONGLE=71
 
 node=""
@@ -46,6 +48,6 @@ exec "$DOCKER" run --rm --name sdrscan \
   -v sdrscan-data:/var/lib/sdrscan -v /etc/sdrscan:/etc/sdrscan:ro \
   ${SDRSCAN_EXTRA_MOUNTS:-} \
   --network host \
-  --cpus 2 --cpu-shares 512 --blkio-weight 100 --memory "$MEMORY" --memory-swap "$MEMORY" \
+  --cpus "$CPUS" --cpu-shares 512 --blkio-weight 100 --memory "$MEMORY" --memory-swap "$MEMORY" \
   --log-opt max-size=5m --log-opt max-file=2 \
   "${SDRSCAN_IMAGE:-sdrscan:current}"
