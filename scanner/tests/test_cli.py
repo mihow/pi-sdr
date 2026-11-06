@@ -129,3 +129,43 @@ def test_health_command(tmp_path, capsys):
 def test_run_argument_errors(args):
     with pytest.raises(SystemExit):
         main(args)
+
+
+def test_live_page_bind_is_retried_until_the_address_exists():
+    # At boot the tailnet address appears only once Tailscale is up; binding it earlier
+    # raised EADDRNOTAVAIL and crashed the whole scanner. The page now retries instead.
+    import threading
+
+    from sdrscan.cli import bind_with_retry
+
+    attempts = []
+
+    class Server:
+        started = False
+
+        def start(self):
+            self.started = True
+
+    def factory():
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise OSError(99, "Cannot assign requested address")
+        return Server()
+
+    stop = threading.Event()
+    server = bind_with_retry(factory, stop, retry_s=0.0)
+    assert server is not None and server.started
+    assert len(attempts) == 3
+
+
+def test_live_page_bind_gives_up_when_stopping():
+    import threading
+
+    from sdrscan.cli import bind_with_retry
+
+    def factory():
+        raise OSError(99, "Cannot assign requested address")
+
+    stop = threading.Event()
+    stop.set()
+    assert bind_with_retry(factory, stop, retry_s=0.0) is None

@@ -21,6 +21,7 @@ from .clock import RealClock
 from .config import STT_NAMES, Config, load_config
 
 DEFAULT_CONFIG = Path("/etc/sdrscan/config.yaml")
+LIVE_BIND_RETRY_S = 15.0  # how often the live page retries a tailnet address not up yet
 SIM_EPOCH = 1_780_272_000.0  # 2026-06-01 00:00 UTC, a Monday
 DONGLE_LOST_EXIT = 71  # the radio stayed missing; restart the container to rescan USB
 
@@ -32,6 +33,29 @@ def _config(path: str | None) -> Config:
 
 
 # -- run ---------------------------------------------------------------------------------
+def bind_with_retry(factory, stop, retry_s: float = LIVE_BIND_RETRY_S):
+    """Build and start a server, retrying while its address cannot be bound yet.
+
+    Returns the started server, or None when ``stop`` is set first.
+    """
+    log = logging.getLogger("sdrscan")
+    warned = False
+    while not stop.is_set():
+        try:
+            server = factory()
+        except OSError as exc:
+            if not warned:
+                log.warning("live page not bound yet (%s); retrying every %.0f s", exc, retry_s)
+                warned = True
+            stop.wait(retry_s)
+            continue
+        server.start()
+        if warned:
+            log.info("live page bound")
+        return server
+    return None
+
+
 def cmd_run(args) -> int:
     from .live import LiveServer
     from .service import Service
@@ -62,20 +86,29 @@ def cmd_run(args) -> int:
 
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
-    live = None
+    live_holder: list = []
     if cfg.live.enabled and cfg.live.bind_address:
-        live = LiveServer(
-            svc.store,
-            svc.clips,
-            svc.ledger,
-            cfg.live.bind_address,
-            cfg.live.port,
-            # The live page is reachable only over the tailnet, so it shows transcripts and
-            # call signs whatever the uplink setting.
-            digest_fn=lambda: svc.make_digest(include_transcripts=True),
-            health_fn=_health_fn(svc),
-        )
-        live.start()
+
+        def make_live():
+            return LiveServer(
+                svc.store,
+                svc.clips,
+                svc.ledger,
+                cfg.live.bind_address,
+                cfg.live.port,
+                # The live page is reachable only over the tailnet, so it shows transcripts
+                # and call signs whatever the uplink setting.
+                digest_fn=lambda: svc.make_digest(include_transcripts=True),
+                health_fn=_health_fn(svc),
+            )
+
+        # Bound in the background: the tailnet address may not exist yet at boot, and the
+        # page must never stop the scanner.
+        threading.Thread(
+            target=lambda: live_holder.append(bind_with_retry(make_live, stop)),
+            name="sdrscan-live-bind",
+            daemon=True,
+        ).start()
     svc.start_watchdog(stop)
     logging.getLogger("sdrscan").info("scanning; source %s", args.source)
     from .runner import DongleLost
@@ -88,8 +121,9 @@ def cmd_run(args) -> int:
         logging.getLogger("sdrscan").error("%s; exiting for a restart", exc)
         code = DONGLE_LOST_EXIT
     finally:
-        if live is not None:
-            live.shutdown()
+        for live in live_holder:
+            if live is not None:
+                live.shutdown()
         svc.shutdown()
     return code
 
