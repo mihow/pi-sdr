@@ -95,10 +95,11 @@ class BandPlan:
             except TypeError as exc:
                 raise BandPlanError(f"band {i}: {exc}") from exc
             bands.append(band)
-        label_map: dict[int, str] = {}
+        # Standard channel numbers from the plan come first; a local labels file overrides them.
+        label_map: dict[int, str] = {int(k): str(v) for k, v in (raw.get("channels") or {}).items()}
         if labels is not None:
             loaded = yaml.safe_load(Path(labels).read_text()) or {}
-            label_map = {int(k): str(v) for k, v in loaded.items()}
+            label_map.update({int(k): str(v) for k, v in loaded.items()})
         return cls(bands, label_map)
 
     def band(self, band_id: str) -> Band:

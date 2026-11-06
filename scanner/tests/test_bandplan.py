@@ -102,3 +102,34 @@ def test_labels_overlay_renames_without_changing_hz(tmp_path: Path):
     assert ch.name == "Ranch channel 1"
     other = plan.channel_for(462_587_500)
     assert other.name != "Ranch channel 1"
+
+
+@pytest.mark.parametrize(
+    ("hz", "name"),
+    [
+        (462_562_500, "Ch 1"),
+        (462_712_500, "Ch 7"),
+        (467_562_500, "Ch 8"),
+        (467_712_500, "Ch 14"),
+        (462_550_000, "Ch 15"),
+        (462_700_000, "Ch 21"),
+        (462_725_000, "Ch 22"),
+        (467_550_000, "Ch 15R input"),
+        (467_725_000, "Ch 22R input"),
+    ],
+)
+def test_gmrs_frs_channels_carry_their_standard_numbers(plan: BandPlan, hz: int, name: str):
+    """A listener tunes a handheld by channel number, so GMRS/FRS keys show it."""
+    assert plan.channel_for(hz).name == name
+
+
+def test_channels_without_a_standard_number_show_only_mhz(plan: BandPlan):
+    assert plan.channel_for(456_337_500).name == "456.3375 MHz"
+
+
+def test_local_labels_override_standard_channel_names(tmp_path: Path):
+    labels = tmp_path / "labels.yaml"
+    labels.write_text("462550000: Valley repeater\n")
+    plan = BandPlan.load(DEFAULT_BANDPLAN, labels=labels)
+    assert plan.channel_for(462_550_000).name == "Valley repeater"
+    assert plan.channel_for(462_700_000).name == "Ch 21"

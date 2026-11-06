@@ -4,7 +4,9 @@
 # tier B: the rest, revisited every few minutes.
 # policy: dwell (voice; may get a dwell), occupancy (count energy only),
 #         decoder (left for a later external decoder job), ignore (never swept).
-# Site-specific channel names go in a local labels file, never in this file.
+# channels: standard, nationwide channel numbers (GMRS/FRS), shown next to the frequency.
+# Site-specific channel names go in a local labels file, never in this file. A local label
+# for the same Hz replaces the standard name.
 
 defaults:
   mode: unknown
@@ -74,3 +76,38 @@ bands:
   - {id: sat_l, name: Satellite L band, lo_hz: 1_525_000_000, hi_hz: 1_559_000_000, raster_hz: 25_000, bw_hz: 25_000}
   - {id: gnss, name: GNSS, lo_hz: 1_559_000_000, hi_hz: 1_610_000_000, raster_hz: 1_000_000, bw_hz: 2_000_000, policy: ignore}
   - {id: l_band_hi, name: L band 1610-1766, lo_hz: 1_610_000_000, hi_hz: 1_766_000_000, raster_hz: 100_000, bw_hz: 100_000}
+
+# GMRS/FRS channel numbers (47 CFR 95). 1-7 and 15-22 are shared by GMRS and FRS; 8-14
+# are FRS only. GMRS repeaters listen on 467.550-467.725 ("15R" to "22R") and transmit
+# on the matching 462 MHz channel.
+channels:
+  462562500: Ch 1
+  462587500: Ch 2
+  462612500: Ch 3
+  462637500: Ch 4
+  462662500: Ch 5
+  462687500: Ch 6
+  462712500: Ch 7
+  467562500: Ch 8
+  467587500: Ch 9
+  467612500: Ch 10
+  467637500: Ch 11
+  467662500: Ch 12
+  467687500: Ch 13
+  467712500: Ch 14
+  462550000: Ch 15
+  462575000: Ch 16
+  462600000: Ch 17
+  462625000: Ch 18
+  462650000: Ch 19
+  462675000: Ch 20
+  462700000: Ch 21
+  462725000: Ch 22
+  467550000: Ch 15R input
+  467575000: Ch 16R input
+  467600000: Ch 17R input
+  467625000: Ch 18R input
+  467650000: Ch 19R input
+  467675000: Ch 20R input
+  467700000: Ch 21R input
+  467725000: Ch 22R input
