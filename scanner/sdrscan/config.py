@@ -31,6 +31,9 @@ class ConfigError(ValueError):
 class DutyConfig:
     survey_min_share: float = 0.55
     dwell_max_share: float = 0.40
+    # Floor for dwells when one tier A sweep alone fills the revisit target (slow hops):
+    # the sweep period stretches so that at least this share stays free for dwells.
+    dwell_min_share: float = 0.15
     calibrate_share: float = 0.05
     calibrate_interval_s: float = 300.0
     calibrate_s: float = 1.0
@@ -248,6 +251,8 @@ def _validate(cfg: Config) -> None:
     d = cfg.duty
     if d.dwell_max_share + d.calibrate_share + d.survey_min_share > 1.0 + 1e-9:
         raise ConfigError("duty: survey_min_share + dwell_max_share + calibrate_share exceed 1")
+    if not 0.0 <= d.dwell_min_share <= d.dwell_max_share:
+        raise ConfigError("duty: dwell_min_share must be between 0 and dwell_max_share")
     for name in ("survey_min_share", "dwell_max_share", "calibrate_share"):
         if not 0.0 <= getattr(d, name) <= 1.0:
             raise ConfigError(f"duty.{name}: share must be between 0 and 1")

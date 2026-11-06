@@ -132,6 +132,7 @@ class Scheduler:
             "tier_a_revisit_max_s": float(rev.max()),
             "tier_b_pass_s": self._b_pass_s,
             "hop_s": self._hop_t,
+            "tier_a_cycle_s": self._cycle_target(),
         }
 
     def coverage(self, hour_ts: int) -> float | None:
@@ -173,9 +174,20 @@ class Scheduler:
         )
 
     def _slack(self, now: float) -> float:
-        target = self.cfg.tier_a_revisit_s * _PLAN_MARGIN
+        target = self._cycle_target()
         remaining = len(self.hops_a) - self._ia
         return self._cycle_start + target - now - remaining * self._hop_t
+
+    def _cycle_target(self) -> float:
+        """Planned length of one tier A sweep, in seconds.
+
+        Normally 90% of the revisit target. When the hops are slow enough that the sweep
+        alone would fill that, the period stretches so dwell_min_share and calibration stay
+        free; otherwise no dwell could ever start and voice would never be recorded.
+        """
+        sweep = len(self.hops_a) * self._hop_t
+        free = 1.0 - self.cfg.dwell_min_share - self.cfg.calibrate_share
+        return max(self.cfg.tier_a_revisit_s * _PLAN_MARGIN, sweep / max(free, 0.05))
 
     def _visit_a(self, hop: int, now: float) -> None:
         prev = self._last_visit.get(hop)

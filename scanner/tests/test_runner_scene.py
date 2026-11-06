@@ -137,3 +137,38 @@ def test_spur_and_always_on_marks_survive_a_restart(tmp_path, vclock):
     t = vclock.now()
     ev = b.tracker.update([Peak(float(carrier), 6_000.0, -30.0, 25.0)], t, "survey")
     assert not [e for e in ev if e.kind == "opened"] and not b.tracker.tracks()
+
+
+class _SlowSource(SyntheticSource):
+    """A source whose every survey read costs extra time, like a busy Raspberry Pi 5."""
+
+    def __init__(self, *args, extra_s: float, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.extra_s = extra_s
+
+    def read_psd(self, nfft: int, navg: int):
+        out = super().read_psd(nfft, navg)
+        self.clock.sleep(self.extra_s)
+        return out
+
+
+def test_slow_hops_still_leave_time_to_dwell(tmp_path, vclock):
+    """When a voice-band sweep alone fills the revisit target, dwells keep a minimum share.
+
+    On the Pi a hop takes about 0.24 s, so the 54 tier A hops need 13 s of the 13.5 s plan.
+    The sweep stretches instead of starving every dwell: voice is then never recorded.
+    """
+    plan = BandPlan.load(DEFAULT_BANDPLAN)
+    scene = Scene.from_yaml((SCENES / "week_basic.yaml").read_text(), clock=vclock)
+    store = Store.open(tmp_path / "scan.sqlite", vclock)
+    store.migrate()
+    cfg = Config(duty=DutyConfig(dwell_block_s=0.5))
+    source = _SlowSource(scene, vclock, extra_s=0.13)
+    runner = Runner(cfg=cfg, plan=plan, source=source, clock=vclock, store=store, spectrum="psd")
+    runner.run(until=vclock.now() + 20 * 60)
+    runner.shutdown()
+    rep = runner.scheduler.budget_report()
+    assert rep["hop_s"] > 0.22
+    assert rep["share"].get(DWELL, 0.0) >= cfg.duty.dwell_min_share * 0.8
+    assert any(t["source"] == "dwell" for t in store.transmissions())
+    assert rep["tier_a_revisit_p95_s"] <= 22.0

@@ -12,6 +12,7 @@ labels_path: null              # optional local display names; never commit a si
 duty:
   survey_min_share: 0.55
   dwell_max_share: 0.40
+  dwell_min_share: 0.15       # kept for dwells even when slow hops stretch the voice-band sweep
   calibrate_share: 0.05         # upper bound; quiet-hour baselines use far less
   calibrate_interval_s: 300.0
   calibrate_s: 1.0
