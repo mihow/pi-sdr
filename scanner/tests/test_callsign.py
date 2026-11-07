@@ -21,6 +21,12 @@ POSITIVE = [
     ("WRAB123 mobile one", "gmrs_frs_462", ["WRAB123"], "gmrs"),
     ("whiskey romeo alpha bravo one two three", "gmrs_frs_462", ["WRAB123"], "gmrs"),
     ("KAE1234 base", "gmrs_frs_462", ["KAE1234"], "gmrs"),
+    # How Whisper writes calls spoken on a GMRS net: spaced, dotted, hyphenated, or with
+    # the operator's name run on.
+    ("without their WRAB 123 again, thanks", "gmrs_frs_462", ["WRAB123"], "gmrs"),
+    ("W.R.C.D. 456 checking in with no traffic", "gmrs_frs_462", ["WRCD456"], "gmrs"),
+    ("loud and clear, this is W-R-E-F 789", "gmrs_frs_462", ["WREF789"], "gmrs"),
+    ("WRGH321BOB in service", "gmrs_frs_462", ["WRGH321"], "gmrs"),
     ("November one two three alpha bravo, cleared to land", "airband", ["N123AB"], "aviation"),
     ("N4567 runway two seven", "airband", ["N4567"], "aviation"),
     ("november five five two kilo taxi", "airband", ["N552K"], "aviation"),
@@ -50,6 +56,8 @@ NEGATIVE = [
     ("November one two three", "ham_2m"),  # tail numbers only count on airband
     ("4x4 on route 66", "vhf_lmr_2"),
     ("delta 1 5 0 heading two seven zero", "airband"),  # airline flight, not a tail
+    ("the GMRS 550 repeater", "gmrs_frs_462"),  # an acronym and a number, not a call
+    ("ARES 123 drill", "ham_2m"),
 ]
 
 
@@ -73,3 +81,12 @@ def test_repeated_call_is_reported_once():
 def test_one_by_one_special_event_call_is_less_certain():
     one = extract("N2Q", band="ham_2m")[0].confidence
     assert one < extract("N2QX", band="ham_2m")[0].confidence
+
+
+def test_spaced_and_dotted_net_calls_are_sure_enough_to_show():
+    """The digest shows calls at SHOW_CONFIDENCE or more; net check-ins must reach it."""
+    from sdrscan.callsign import SHOW_CONFIDENCE
+
+    for text in ("WRAB 123 checking in", "W.R.C.D. 456 checking in", "this is W-R-E-F 789"):
+        (c,) = extract(text, band="gmrs_frs_462")
+        assert c.confidence >= SHOW_CONFIDENCE, (text, c)

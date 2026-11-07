@@ -169,3 +169,15 @@ def test_live_page_bind_gives_up_when_stopping():
     stop = threading.Event()
     stop.set()
     assert bind_with_retry(factory, stop, retry_s=0.0) is None
+
+
+def test_recall_calls_command_reports_what_it_added(tmp_path, vclock):
+    from sdrscan.cli import main
+    from sdrscan.store import Store
+
+    store = Store.open(tmp_path / "scan.sqlite", vclock)
+    store.migrate()
+    store.close()
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(f"data_root: {tmp_path}\n")
+    assert main(["recall-calls", "--config", str(cfg), "--db", str(tmp_path / "scan.sqlite")]) == 0

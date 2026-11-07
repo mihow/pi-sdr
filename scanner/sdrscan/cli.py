@@ -506,6 +506,21 @@ def cmd_health(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_recall_calls(args) -> int:
+    """Re-scan stored transcripts for call signs the extractor did not find at the time."""
+    from .bandplan import BandPlan
+    from .store import Store
+
+    cfg = _config(args.config)
+    plan = BandPlan.load(cfg.bandplan_path, cfg.labels_path)
+    db = Path(args.db) if args.db else cfg.data_root / "db" / "scan.sqlite"
+    store = Store.open(db, RealClock())
+    added = store.recall_calls(lambda hz: plan.band_for(hz).id)
+    store.close()
+    print(json.dumps({"added": added}))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="sdrscan", description=__doc__)
     p.add_argument("-v", "--verbose", action="store_true")
@@ -632,6 +647,11 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("--db")
     h.add_argument("--max-age-s", type=float, default=120.0)
     h.set_defaults(fn=cmd_health)
+
+    rc = sub.add_parser("recall-calls", help="find call signs in transcripts stored earlier")
+    rc.add_argument("--config")
+    rc.add_argument("--db")
+    rc.set_defaults(fn=cmd_recall_calls)
 
     args = p.parse_args(argv)
     logging.basicConfig(

@@ -201,3 +201,27 @@ def test_stage_counters_add_up_per_hour(store, vclock):
     assert store.counts(t, t) == {"survey_hops": 3, "keyups": 1}
     store.count("survey_hops", t=t)  # a later flush adds to the stored hour
     assert store.counts(t, t + 3600) == {"survey_hops": 4, "keyups": 1, "dwell_s": 0.5}
+
+
+def test_recall_calls_finds_calls_an_older_extractor_missed_once(store, vclock):
+    """Transcripts stored before an extractor fix get their calls on a re-scan, and a
+    second re-scan adds nothing, so the per-channel totals are not double counted."""
+    from sdrscan.tracker import Transmission
+
+    t = vclock.now()
+    tx = Transmission(hz=462_550_000, band="gmrs_frs_462", mode="nfm", t_start=t, t_end=t + 5,
+                      dur_ms=5000, peak_snr_db=20.0, med_snr_db=18.0, floor_db=-60.0,
+                      bw_hz=11_000.0, source="dwell", cls="voice")  # fmt: skip
+    tx_id = store.add_tx(tx)
+    store.add_transcript(1, tx_id, "whisper", "this is WRAB 123 checking in", 0.9, 0.5, t + 10)
+    tid = store.add_transcript(2, None, "whisper", "WRCD 456 here", 0.9, 0.5, t + 20)
+    store.add_callsign(
+        "WRAB123", "gmrs", hz=462_550_000, t=t + 10, confidence=0.9, tx_id=tx_id, transcript_id=99
+    )  # fmt: skip  (another transcript)
+    store.flush()
+    band_of = lambda hz: "gmrs_frs_462"  # noqa: E731
+    assert store.recall_calls(band_of) == 1
+    assert store.recall_calls(band_of) == 0
+    totals = {(r["call"], r["hz"]): r["n"] for r in store.db.execute("SELECT * FROM callsign_hz")}
+    assert totals == {("WRAB123", 462_550_000): 2}
+    assert tid  # the transcript with no transmission has no channel and is skipped

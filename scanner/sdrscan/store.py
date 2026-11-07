@@ -16,6 +16,7 @@ import dataclasses
 import sqlite3
 import statistics
 import threading
+import typing
 import uuid
 from pathlib import Path
 
@@ -353,6 +354,35 @@ class Store:
                 transcript_id=transcript_id,
             )
         return calls
+
+    def recall_calls(self, band_of: typing.Callable[[int], str | None]) -> int:
+        """Re-scan stored transcripts for call signs that are not recorded for them yet.
+
+        Run this after the extractor learns a new way a call is written, so transcripts
+        stored earlier count too. A call already recorded for a transcript is skipped, so
+        a second run adds nothing. Transcripts with no transmission have no channel and are
+        skipped. ``band_of`` maps a channel to its band id. Returns the calls added.
+        """
+        rows = self.db.execute(
+            "SELECT r.id, r.text, r.confidence, r.created, t.id AS tx_id, t.hz"
+            " FROM transcripts r JOIN transmissions t ON t.transcript_id = r.id"
+        ).fetchall()
+        have = {
+            (r["transcript_id"], r["call"])
+            for r in self.db.execute("SELECT transcript_id, call FROM callsigns")
+        }
+        added = 0
+        for r in rows:
+            for c in callsign.extract(r["text"] or "", band=band_of(r["hz"])):
+                if (r["id"], c.call) in have:
+                    continue
+                self.add_callsign(c.call, c.kind, hz=r["hz"], t=r["created"],
+                                  confidence=min(c.confidence, float(r["confidence"] or 0)),
+                                  tx_id=r["tx_id"], transcript_id=r["id"])  # fmt: skip
+                have.add((r["id"], c.call))
+                added += 1
+        self.flush()
+        return added
 
     def count(self, stage: str, n: float = 1, t: float | None = None) -> None:
         """Add ``n`` to this hour's counter for a pipeline stage (written on flush)."""

@@ -53,6 +53,8 @@ _ONE_BY_ONE_PENALTY = 0.2  # K7A style special-event calls are rare; a word fits
 _ADJACENT_PENALTY = 0.1  # more call-like symbols run on before or after the match
 _MAX_TOKENS = 12
 _WORD = re.compile(r"[a-z0-9]+")
+_DOTTED = re.compile(r"\b(?:[A-Za-z]\.){2,}")  # W.R.A.B.
+_MAX_GLUED = 12  # longest letters-and-digits token split into groups (WRAB123BOB)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -63,29 +65,41 @@ class Callsign:
 
 
 def _symbols(text: str) -> list[list[tuple[str, str]]]:
-    """Runs of call-like tokens as (characters, source) pairs; other words end a run."""
-    clean = text.lower().replace("-", "")
+    """Runs of call-like tokens as (characters, source) pairs; other words end a run.
+
+    Whisper often writes a spoken call as capitals and digits apart ("WRAB 123"), with
+    dots or hyphens between the letters ("W.R.A.B.", "W-R-A-B"), or with the operator's
+    name run on ("WRAB123BOB"). A short all-capital group counts as written, so it can
+    join the digits after it; a long letters-and-digits token is split into its groups.
+    """
+    text = _DOTTED.sub(lambda m: m.group(0).replace(".", ""), text).replace("-", "")
     runs: list[list[tuple[str, str]]] = []
     run: list[tuple[str, str]] = []
-    for m in re.finditer(r"[a-z0-9]+|[^a-z0-9\s]", clean):
-        w = m.group(0)
-        sym: tuple[str, str] | None = None
+    for m in re.finditer(r"[A-Za-z0-9]+|[^A-Za-z0-9\s]", text):
+        raw = m.group(0)
+        w = raw.lower()
+        syms: list[tuple[str, str]] = []
         if w in PHONETIC:
-            sym = (PHONETIC[w], "spoken")
+            syms = [(PHONETIC[w], "spoken")]
         elif w in DIGITS:
-            sym = (DIGITS[w], "spoken")
+            syms = [(DIGITS[w], "spoken")]
         elif w.isdigit() and len(w) <= 4:
-            sym = (w, "digits")
+            syms = [(w, "digits")]
         elif len(w) == 1 and w.isalpha():
-            sym = (w.upper(), "loose")
-        elif _WORD.fullmatch(w) and len(w) <= 7 and not w.isalpha() and not w.isdigit():
-            sym = (w.upper(), "written")
-        if sym is None:
+            syms = [(w.upper(), "loose")]
+        elif raw.isalpha() and raw.isupper() and 2 <= len(raw) <= 4:
+            syms = [(raw, "written")]
+        elif _WORD.fullmatch(w) and not w.isalpha() and not w.isdigit():
+            if len(w) <= 7:
+                syms = [(w.upper(), "written")]
+            elif len(w) <= _MAX_GLUED:
+                syms = [(g.upper(), "written") for g in re.findall(r"[a-z]+|[0-9]+", w)]
+        if not syms:
             if run:
                 runs.append(run)
             run = []
         else:
-            run.append(sym)
+            run.extend(syms)
     if run:
         runs.append(run)
     return runs
