@@ -44,6 +44,9 @@ FORMATS = {
 }
 BLOCKLIST = frozenset({"N2O", "W3C", "K9S"})
 AVIATION_BANDS = frozenset({"airband"})
+# Bump when extraction finds calls it did not before. The service then re-scans stored
+# transcripts once at start-up (Store.recall_calls), so older transcripts count too.
+EXTRACTOR_VERSION = 2
 MIN_CONFIDENCE = 0.4  # weaker matches are not returned at all
 SHOW_CONFIDENCE = 0.6  # stored calls below this are kept but not summarized
 

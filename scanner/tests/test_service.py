@@ -347,3 +347,33 @@ def test_speech_to_text_waits_while_the_soc_is_hot(tmp_path, vclock, sys_root):
     svc._drain_stt()
     assert svc._stt_q.qsize() == 0, "once cool, the queued clip is transcribed"
     svc.shutdown()
+
+
+def test_start_up_rescans_stored_transcripts_once_per_extractor_version(tmp_path, vclock, sys_root):
+    """Transcripts stored before an extractor fix get their call signs when the new code
+    starts, and only once: a second start adds nothing."""
+    from sdrscan.callsign import EXTRACTOR_VERSION
+    from sdrscan.tracker import Transmission
+
+    cfg = _template_cfg(tmp_path, None)
+    svc = _service(cfg, vclock, sys_root)
+    t = vclock.now()
+    tx = Transmission(hz=462_550_000, band="gmrs_frs_462", mode="nfm", t_start=t, t_end=t + 5,
+                      dur_ms=5000, peak_snr_db=20.0, med_snr_db=18.0, floor_db=-60.0,
+                      bw_hz=11_000.0, source="dwell", cls="voice")  # fmt: skip
+    tx_id = svc.store.add_tx(tx)
+    svc.store.add_transcript(1, tx_id, "whisper", "this is WRAB 123", 0.9, 0.5, t + 10)
+    svc.store.set_meta("callsign_extractor", "1")
+    svc.store.flush()
+    svc.shutdown()
+
+    def calls(s):
+        return [r[0] for r in s.store.db.execute("SELECT call FROM callsigns")]
+
+    svc = _service(cfg, vclock, sys_root)
+    assert calls(svc) == ["WRAB123"]
+    assert svc.store.meta("callsign_extractor") == str(EXTRACTOR_VERSION)
+    svc.shutdown()
+    svc = _service(cfg, vclock, sys_root)
+    assert calls(svc) == ["WRAB123"]
+    svc.shutdown()

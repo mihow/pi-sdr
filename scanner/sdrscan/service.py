@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import rollup
+from . import callsign, rollup
 from .bandplan import BandPlan
 from .clips import ClipStore, Encoder
 from .clock import Clock, RealClock, kernel_clock_synced
@@ -86,6 +86,7 @@ class Service:
         self.store = Store.open(db_path or root / "db" / "scan.sqlite", clock)
         self.store.migrate()
         self.store.set_meta("site_id", cfg.site_id)
+        self._recall_calls()
         fs_kw = {"statvfs": statvfs} if statvfs is not None else {}
         self.clips = ClipStore(
             self.store,
@@ -162,6 +163,20 @@ class Service:
             self.publisher.publish_files({"index.html": (self.www / "index.html").read_bytes()})
 
     # -- loop --------------------------------------------------------------------------
+    def _recall_calls(self) -> None:
+        """Re-scan stored transcripts once per call-sign extractor version.
+
+        This runs here, before scanning starts, because the store hands out row ids from
+        memory: a second process writing call signs beside the service would reuse them.
+        """
+        done = self.store.meta("callsign_extractor")
+        if done is not None and int(done) >= callsign.EXTRACTOR_VERSION:
+            return
+        added = self.store.recall_calls(lambda hz: self.plan.band_for(hz).id)
+        self.store.set_meta("callsign_extractor", str(callsign.EXTRACTOR_VERSION))
+        self.store.flush()
+        log.info("call-sign re-scan found %d calls in stored transcripts", added)
+
     def run(self, until: float | None = None, stop: threading.Event | None = None) -> None:
         while (until is None or self.clock.now() < until) and not (stop and stop.is_set()):
             self.runner.step()

@@ -507,7 +507,11 @@ def cmd_health(args) -> int:
 
 
 def cmd_recall_calls(args) -> int:
-    """Re-scan stored transcripts for call signs the extractor did not find at the time."""
+    """Re-scan stored transcripts for call signs the extractor did not find at the time.
+
+    For a copy of the database, or with the service stopped. The service re-scans on its
+    own at start-up; a second writer beside it would reuse the row ids it hands out.
+    """
     from .bandplan import BandPlan
     from .store import Store
 
@@ -515,6 +519,7 @@ def cmd_recall_calls(args) -> int:
     plan = BandPlan.load(cfg.bandplan_path, cfg.labels_path)
     db = Path(args.db) if args.db else cfg.data_root / "db" / "scan.sqlite"
     store = Store.open(db, RealClock())
+    store.migrate()
     added = store.recall_calls(lambda hz: plan.band_for(hz).id)
     store.close()
     print(json.dumps({"added": added}))
