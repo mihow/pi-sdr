@@ -37,6 +37,7 @@ detect:
   hang_s: 2.0
   keyup_max_s: 5.0            # a dwell carrier this short with no voice or data is a key-up
   always_on_duty: 0.80
+  keyup_margin_db: 3.0        # a reading must clear the band threshold by this much to earn a dwell
 
 quota:
   clip_quota_bytes: 2147483648 # 2 GiB, about 550 h of 8 kbit/s Opus speech

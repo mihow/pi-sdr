@@ -62,6 +62,10 @@ class DetectConfig:
     # holds its carrier 1 to 3 s after the user unkeys, so this allows for that tail.
     keyup_max_s: float = 5.0
     always_on_duty: float = 0.80
+    # A transmitter keying up rises well above the detection threshold. Steady hum and
+    # noise that sit right at the threshold flicker across it and open tracks all day; a
+    # track only earns a dwell once one reading clears the threshold by this margin.
+    keyup_margin_db: float = 3.0
 
 
 @dataclasses.dataclass(frozen=True)

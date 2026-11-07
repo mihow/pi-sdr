@@ -160,3 +160,32 @@ def test_active_lists_voice_tracks(plan, vclock):
     tr.update([pk(462_587_500, 12.0)], 0.0, "dwell", span=SPAN)
     assert [t.hz for t in tr.active("dwell")] == [GMRS]
     assert [t.hz for t in tr.active("dwell", include_candidates=True)] == [GMRS, 462_587_500]
+
+
+VHF_LOW = 31_080_000
+VHF_SPAN = (30_100_000, 32_000_000)
+
+
+def test_reading_well_above_threshold_marks_a_key_up(plan, vclock):
+    """A transmitter keying up rises clearly above the detection threshold."""
+    tr = Tracker(plan, vclock)
+    survey(tr, 0.0, [pk(GMRS, snr=18.0)])
+    assert tr.tracks()[0].keyed
+
+
+def test_hum_flickering_at_the_threshold_never_keys_up(plan, vclock):
+    """Steady hum sits about 0.3 dB above the threshold and crosses it on and off, so it
+    opens and closes tracks all day. Such tracks must not count as key-ups."""
+    tr = Tracker(plan, vclock)
+    for i in range(6):
+        tr.update([pk(VHF_LOW, snr=10.4)] if i % 3 else [], i * 15.0, "survey", span=VHF_SPAN)
+        assert all(not t.keyed for t in tr.tracks())
+
+
+def test_later_strong_reading_keys_up_an_open_track(plan, vclock):
+    tr = Tracker(plan, vclock)
+    survey(tr, 0.0, [pk(GMRS, snr=11.0)])
+    survey(tr, 15.0, [pk(GMRS, snr=11.0)])
+    assert tr.state(GMRS) is TrackState.ACTIVE and not tr.tracks()[0].keyed
+    survey(tr, 30.0, [pk(GMRS, snr=16.0)])
+    assert tr.tracks()[0].keyed

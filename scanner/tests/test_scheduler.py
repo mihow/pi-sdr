@@ -19,10 +19,16 @@ def plan() -> BandPlan:
 class FakeTracks:
     """Stands in for Tracker.active(): a fixed set of persistent voice tracks."""
 
-    def __init__(self, plan: BandPlan, hzs: list[int]) -> None:
+    def __init__(self, plan: BandPlan, hzs: list[int], unkeyed: list[int] = ()) -> None:
         self._tracks = [
-            Track(channel=plan.channel_for(h), first_t=0, last_t=0, state=TrackState.ACTIVE)
-            for h in hzs
+            Track(
+                channel=plan.channel_for(h),
+                first_t=0,
+                last_t=0,
+                state=TrackState.ACTIVE,
+                keyed=h not in unkeyed,
+            )
+            for h in [*hzs, *unkeyed]
         ]
 
     def active(self, policy: str = "dwell", include_candidates: bool = False) -> list[Track]:
@@ -79,6 +85,21 @@ def test_dwell_session_ends_at_sixty_seconds_then_cools_down(plan, vclock):
         end_a = a[-1][0] + a[-1][1].duration_s + SETTLE
         assert b[0][0] - end_a >= cfg.dwell_cooldown_s - 1e-6
     assert all(j.channels and j.channels[0].hz == 462_562_500 for _, j in dwells)
+
+
+def test_dwell_goes_to_key_ups_not_to_hum_that_never_keyed_up(plan, vclock):
+    """Hum near the threshold opens many tracks in one window. A window with more such
+    tracks must still lose to a window with one real key-up, and hum alone never dwells."""
+    hum = [31_020_000, 31_040_000, 31_060_000, 31_080_000]
+    sched = Scheduler(plan, DutyConfig(), vclock)
+    log = drive(sched, vclock, 1800, tracks=FakeTracks(plan, [456_337_500], unkeyed=hum))
+    dwells = [j for _, j in log if j.kind == DWELL]
+    assert dwells
+    assert all(any(c.hz == 456_337_500 for c in j.channels) for j in dwells)
+
+    sched = Scheduler(plan, DutyConfig(), vclock)
+    log = drive(sched, vclock, 1800, tracks=FakeTracks(plan, [], unkeyed=hum))
+    assert not [j for _, j in log if j.kind == DWELL]
 
 
 def test_dwell_window_is_a_survey_hop(plan, vclock):

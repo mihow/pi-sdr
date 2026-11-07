@@ -19,7 +19,7 @@ import statistics
 from .bandplan import BandPlan, Channel
 from .clock import Clock
 from .config import DetectConfig
-from .detect import Peak
+from .detect import Peak, band_threshold
 
 _TRACKED_POLICIES = {"dwell", "decoder"}
 _DUTY_WINDOW_S = 3600.0
@@ -70,6 +70,9 @@ class Track:
     bw_hz: float = 0.0
     dwelt: bool = False
     dwell_run_start: float | None = None
+    # True once a reading cleared the band threshold by ``keyup_margin_db``. Only such
+    # tracks get dwells; see DetectConfig.keyup_margin_db.
+    keyed: bool = False
 
     @property
     def hz(self) -> int:
@@ -290,6 +293,9 @@ class Tracker:
             tr.snrs.append(p.snr_db)
             tr.floors.append(p.level_db - p.snr_db)
         tr.peak_snr = max(tr.peak_snr, p.snr_db)
+        if not tr.keyed and p.snr_db >= self._keyup_snr(ch):
+            tr.keyed = True
+            self.version += 1
         tr.bw_hz = max(tr.bw_hz, p.width_hz)
         if source == "dwell":
             tr.dwelt = True
@@ -309,6 +315,9 @@ class Tracker:
                 self.version += 1
                 return [TrackEvent("opened", hz, t)]
         return []
+
+    def _keyup_snr(self, ch: Channel) -> float:
+        return band_threshold(self.plan.band(ch.band), self.cfg) + self.cfg.keyup_margin_db
 
     def _missed(self, hz: int, t: float, source: str) -> list[TrackEvent]:
         tr = self._tracks.get(hz)

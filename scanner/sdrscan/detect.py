@@ -139,7 +139,8 @@ def _median(x: np.ndarray) -> float:
     return float(0.5 * (part[(n - 1) // 2] + part[n // 2]))
 
 
-def _band_threshold(band, cfg: DetectConfig) -> float:
+def band_threshold(band, cfg: DetectConfig) -> float:
+    """The SNR a peak in this band must exceed to be detected at all."""
     if band.threshold_db is not None:
         return band.threshold_db
     return cfg.fm_threshold_db if band.mode == "wfm" else cfg.threshold_db
@@ -162,7 +163,7 @@ def _thresholds_cached(plan: BandPlan, cfg: DetectConfig, center: int, bin_hz: f
             continue
         a = max(0, int(math.ceil((band.lo_hz - freqs_lo) / bin_hz)))
         b = min(nfft, int(math.ceil((band.hi_hz - freqs_lo) / bin_hz)))
-        thr[a:b] = _band_threshold(band, cfg)
+        thr[a:b] = band_threshold(band, cfg)
     thr.flags.writeable = False
     return thr
 

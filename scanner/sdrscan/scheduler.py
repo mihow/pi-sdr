@@ -229,7 +229,11 @@ class Scheduler:
         return self._issue(job, now)
 
     def _windows(self, tracks: _Tracks, now: float) -> dict[int, list[Channel]]:
-        """Survey hops that cover at least one voice track and are not cooling down."""
+        """Survey hops that cover at least one keyed-up voice track and are not cooling down.
+
+        Tracks that never keyed up (hum or noise at the threshold) are left out, or a window
+        full of them would win every dwell over a window with one real transmission.
+        """
         version = getattr(tracks, "version", None)
         if (
             version is None
@@ -243,6 +247,8 @@ class Scheduler:
             half = self.usable_hz // 2
             raw: dict[int, list[Channel]] = {}
             for tr in tracks.active("dwell", include_candidates=True):
+                if not tr.keyed:
+                    continue
                 i = bisect.bisect_left(self._all_hops, tr.hz - half)
                 while i < len(self._all_hops) and self._all_hops[i] <= tr.hz + half:
                     hop = self._all_hops[i]
