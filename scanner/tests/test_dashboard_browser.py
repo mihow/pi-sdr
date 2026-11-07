@@ -49,6 +49,7 @@ def _variants(tmp_path, vclock) -> dict[str, dict]:
         "Engine two is clear of the north gate, returning to the station now"
     )
     week["recent"][0]["conf"] = 0.8
+    week["labels"]["146940000"] = "W7XYZ repeater"
     week["prose"] = "Land mobile and GMRS were busiest. One new FRS channel appeared today."
     stale = copy.deepcopy(week)
     stale["generated_at"] = now - 3 * 3600
@@ -269,7 +270,9 @@ def test_call_signs_key_ups_and_stage_activity_show(site, browsers):
         "Data pushed",
     ):
         assert label in pipe, label
-    assert "key-up, tone 100.0 Hz" in page.text_content("#recent")
+    recent = page.text_content("#recent")
+    assert "key-up, tone 100.0 Hz" in recent
+    assert "W7XYZ repeater · " in recent, "recent rows must show a channel's label"
     page.click("#tab-now")
     assert "in the last hour" in page.text_content("#pipe-h")
     page.goto(f"{site}/empty/index.html")
