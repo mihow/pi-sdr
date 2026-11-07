@@ -15,7 +15,14 @@ def test_page_is_self_contained_and_small(tmp_path, mode):
     text = page.decode()
     assert re.match(r"index-[0-9a-f]{10}\.html$", path.name)
     assert (tmp_path / "index.html").read_bytes() == page
-    assert "http://" not in text and "https://" not in text
+    # The page fetches nothing off-site. The only absolute URLs are the call-sign lookup
+    # pages a viewer can open by tapping a call.
+    assert "http://" not in text
+    assert set(re.findall(r"https://[^\"']+", text)) == {
+        "https://www.qrz.com/db/",
+        "https://www.repeaterbook.com/fcc/record.php?call=",
+        "https://registry.faa.gov/AircraftInquiry/Search/NNumberResult?nNumberTxt=",
+    }
     # The only <link> is an empty data: icon, which stops the browser fetching /favicon.ico.
     assert re.findall(r"<link[^>]*>", text) == ['<link rel="icon" href="data:,">']
     assert not re.search(r"<script[^>]+src", text)

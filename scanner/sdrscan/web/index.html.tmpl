@@ -56,6 +56,8 @@ details summary{min-height:44px;display:flex;align-items:center;cursor:pointer;f
 .empty{color:var(--mu);margin:4px 0}
 .cs{grid-column:1/-1;color:var(--mu);font-size:.85rem;overflow-wrap:anywhere}
 .cs b{color:var(--ink);font-weight:600}
+a.call{color:inherit;text-decoration:underline;text-decoration-color:var(--ac);text-decoration-thickness:2px;text-underline-offset:3px}
+a.call:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 .kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;margin:0}
 .kv div{min-width:0}.kv dt{color:var(--mu);font-size:.82rem}.kv dd{margin:0;font-weight:600;overflow-wrap:anywhere}
 @media (min-width:720px){.kv{grid-template-columns:repeat(4,minmax(0,1fr))}}
@@ -96,8 +98,12 @@ function band(c){var b=(D.band_names||{})[c.band];return b||c.band||""}
 function name(c){var l=(D.labels||{})[c.hz];return l?l+" · "+band(c):band(c)}
 function n0(x){return Math.round(x||0).toLocaleString()}
 function plural(n,w){return n0(n)+" "+w+(Math.round(n)===1?"":"s")}
-function extra(c){var p=[];if(c.keyup)p.push(plural(c.keyup,"key-up"));if(c.tone)p.push("tone "+c.tone.toFixed(1)+" Hz");if(!p.length&&!(c.calls&&c.calls.length))return null;var d=el("div","cs",p.join(" · "));if(c.calls&&c.calls.length){if(p.length)d.appendChild(document.createTextNode(" · "));d.appendChild(el("b",null,c.calls.join(", ")))}return d}
+function extra(c){var p=[];if(c.keyup)p.push(plural(c.keyup,"key-up"));if(c.tone)p.push("tone "+c.tone.toFixed(1)+" Hz");if(!p.length&&!(c.calls&&c.calls.length))return null;var d=el("div","cs",p.join(" · "));if(c.calls&&c.calls.length){if(p.length)d.appendChild(document.createTextNode(" · "));var b=el("b");c.calls.forEach(function(s,i){if(i)b.appendChild(document.createTextNode(", "));b.appendChild(callLink(s))});d.appendChild(b)}return d}
 var KIND={ham:"amateur",gmrs:"GMRS",aviation:"aircraft"};
+// Public licence lookups: QRZ for amateur, RepeaterBook (FCC records) for GMRS, the FAA registry for aircraft.
+var LOOKUP={ham:"https://www.qrz.com/db/",gmrs:"https://www.repeaterbook.com/fcc/record.php?call=",aviation:"https://registry.faa.gov/AircraftInquiry/Search/NNumberResult?nNumberTxt="};
+function callKind(s){return /^(W[A-Z]{3}[0-9]{3}|K[A-Z]{2}[0-9]{4})$/.test(s)?"gmrs":/^N[1-9][0-9]/.test(s)?"aviation":"ham"}
+function callLink(s,kind){var a=el("a","call",s);a.href=LOOKUP[kind||callKind(s)]+encodeURIComponent(s);a.target="_blank";a.rel="noopener";return a}
 function freq(c){var f=el("div","fq",mhz(c.hz));f.appendChild(el("small",null,"MHz"));return f}
 function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
 function theme(m){var r=document.documentElement;if(m==="auto")r.removeAttribute("data-theme");else r.setAttribute("data-theme",m);$("theme").textContent=m[0].toUpperCase()+m.slice(1);store("sdrscan-theme",m)}
@@ -130,8 +136,8 @@ else{var w=D.windows[win],max=w.top.length?w.top[0].active_s:0;fill("busy",w.top
 $("busy-note").textContent=w.channels+" channels active"+(w.coverage_pct!=null?", "+Math.round(w.coverage_pct)+"% of planned sweeps done":"")+(w.cell_s?". Each cell is "+dur(w.cell_s)+".":".")}
 var cw=D.windows[win==="now"?"hour":win],cl=win==="now"?D.now.calls:cw.calls;
 if(cl===undefined){fill("calls",[],null,"Transcripts and call signs stay on the rig; set uplink.include_transcripts to publish them.");$("calls-note").textContent=""}
-else if(win==="now"){fill("calls",cl,function(c){var li=el("li","ch st");li.appendChild(el("div","fq",c));return li},"No call signs in the 5 minutes before this summary.");$("calls-note").textContent="Heard in the last 5 minutes."}
-else{fill("calls",cl,function(c){var li=el("li","ch"),a=el("div"),f=el("div","fq",c.call);f.appendChild(el("span","tag",KIND[c.kind]||c.kind));a.appendChild(f);li.appendChild(a);var v=el("div","v",c.n+"×");v.appendChild(el("small",null,ago(c.last_ts)));li.appendChild(v);li.appendChild(el("div","cs","on "+c.hz.map(mhz).join(", ")+" MHz · first "+ago(c.first_ts)));return li},"No call signs heard in this window.");$("calls-note").textContent=cw.calls_n>cl.length?cw.calls_n+" call signs in all; the most heard are shown.":"Read from transcripts by speech-to-text; spelled calls can be wrong."}
+else if(win==="now"){fill("calls",cl,function(c){var li=el("li","ch st");var f=el("div","fq");f.appendChild(callLink(c));li.appendChild(f);return li},"No call signs in the 5 minutes before this summary.");$("calls-note").textContent="Heard in the last 5 minutes."}
+else{fill("calls",cl,function(c){var li=el("li","ch"),a=el("div"),f=el("div","fq");f.appendChild(callLink(c.call,c.kind));f.appendChild(el("span","tag",KIND[c.kind]||c.kind));a.appendChild(f);li.appendChild(a);var v=el("div","v",c.n+"×");v.appendChild(el("small",null,ago(c.last_ts)));li.appendChild(v);li.appendChild(el("div","cs","on "+c.hz.map(mhz).join(", ")+" MHz · first "+ago(c.first_ts)));return li},"No call signs heard in this window.");$("calls-note").textContent=cw.calls_n>cl.length?cw.calls_n+" call signs in all; the most heard are shown.":"Read from transcripts by speech-to-text; spelled calls can be wrong."}
 var pw=win==="now"?"hour":win,P=D.windows[pw].pipeline||{},pl=$("pipe"),hh=D.health||{};$("pipe-h").textContent="What the rig did"+(win==="now"?" in the last hour":"");pl.textContent="";
 function kv(l,v){var d=el("div");d.appendChild(el("dt",null,l));d.appendChild(el("dd",null,v));pl.appendChild(d)}
 var cov=D.windows[pw].coverage_pct;kv("Survey hops",n0(P.survey_hops)+(cov!=null?" ("+Math.round(cov)+"% of plan)":""));kv("Peaks detected",n0(P.peaks));kv("Tracks opened",n0(P.opened));kv("Dwell time",dur(P.dwell_s||0));kv("Voice transmissions",n0(P.voice));kv("Key-ups",n0(P.keyups));kv("Clips kept",n0(P.clips)+(P.evicted?", "+n0(P.evicted)+" evicted":""));kv("Transcripts",n0(P.transcripts));kv("Call signs found",n0(P.callsigns));kv("Data pushed",n0(P.push_kb)+" KB"+(hh.uplink?", "+(hh.uplink.month_kb/1000).toFixed(1)+" MB this month":""));

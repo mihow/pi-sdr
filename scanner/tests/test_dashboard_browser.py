@@ -254,6 +254,11 @@ def test_call_signs_key_ups_and_stage_activity_show(site, browsers):
     page.wait_for_selector("#calls li")
     calls = page.text_content("#calls")
     assert "K7ABC" in calls and "aircraft" in calls and "146.52" in calls
+    links = page.eval_on_selector_all("a.call", "as => as.map(a => [a.textContent, a.href])")
+    hrefs = dict(links)
+    assert hrefs["K7ABC"] == "https://www.qrz.com/db/K7ABC"
+    assert hrefs["WRAB123"] == "https://www.repeaterbook.com/fcc/record.php?call=WRAB123"
+    assert all(h.startswith("https://") for _, h in links)
     busy = page.text_content("#busy")
     assert "key-ups" in busy and "tone 100.0 Hz" in busy and "WRAB123" in busy
     pipe = page.text_content("#pipe")
